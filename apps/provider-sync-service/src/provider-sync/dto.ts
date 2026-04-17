@@ -117,4 +117,6 @@ export interface SyncRequestDto {
   userId: string;
   connectionId: string | null;
   mode: "initial" | "incremental" | "backfill" | "repair";
+  fromDate?: string | null;
+  toDate?: string | null;
 }

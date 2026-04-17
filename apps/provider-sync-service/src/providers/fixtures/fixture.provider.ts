@@ -49,7 +49,10 @@ export class FixtureProvider implements AggregationProvider {
   async listTransactions(input: ListTransactionsInput): Promise<TransactionPageDto> {
     const dataset = this.loadData();
     const scoped = dataset.transactions.filter(
-      (transaction) => transaction.accountId === input.accountId,
+      (transaction) =>
+        transaction.accountId === input.accountId &&
+        (!input.fromDate || transaction.bookedAt >= input.fromDate) &&
+        (!input.toDate || transaction.bookedAt <= input.toDate),
     );
 
     const pageSize = 200;

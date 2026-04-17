@@ -54,3 +54,10 @@ export interface ProviderSyncResult {
   accountsFailed: number;
   accountsWarned: number;
 }
+
+export interface SyncProviderDataRequest {
+  connectionId?: string;
+  mode?: "incremental" | "backfill";
+  fromDate?: string;
+  toDate?: string;
+}

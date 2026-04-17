@@ -23,10 +23,23 @@ export class ProviderSyncService {
     return this.providersService.getProvider().listAccounts({ userId, connectionId });
   }
 
-  async listTransactions(userId: string, connectionId: string, accountId: string, cursor?: string) {
+  async listTransactions(
+    userId: string,
+    connectionId: string,
+    accountId: string,
+    cursor?: string,
+    options?: { fromDate?: string; toDate?: string },
+  ) {
     return this.providersService
       .getProvider()
-      .listTransactions({ userId, connectionId, accountId, cursor });
+      .listTransactions({
+        userId,
+        connectionId,
+        accountId,
+        cursor,
+        fromDate: options?.fromDate,
+        toDate: options?.toDate,
+      });
   }
 
   async listHoldings(userId: string, connectionId: string, accountId: string) {
@@ -38,6 +51,8 @@ export class ProviderSyncService {
       userId: request.userId,
       connectionId: request.connectionId,
       mode: request.mode,
+      fromDate: request.fromDate,
+      toDate: request.toDate,
     });
   }
 

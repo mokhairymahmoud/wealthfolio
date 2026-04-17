@@ -191,7 +191,10 @@ impl BrokerSyncService {
                     .clone()
                     .or_else(|| account.account_number.clone()),
                 meta: account.meta.clone(),
-                provider: account.provider.clone().or_else(|| broker_account.provider_type.clone()),
+                provider: account
+                    .provider
+                    .clone()
+                    .or_else(|| broker_account.provider_type.clone()),
                 provider_account_id: Some(provider_account_id.to_string()),
                 is_archived: Some(account.is_archived),
                 tracking_mode: Some(tracking_mode),
@@ -206,7 +209,9 @@ impl BrokerSyncService {
         account_number: Option<&str>,
         currency: &str,
     ) -> Option<&'a Account> {
-        let account_number = account_number.map(str::trim).filter(|value| !value.is_empty())?;
+        let account_number = account_number
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
 
         existing_accounts.iter().find(|account| {
             account

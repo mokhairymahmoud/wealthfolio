@@ -16,8 +16,8 @@ use crate::{
     main_lib::AppState,
 };
 use wealthfolio_connect::{
-    AggregationApiClient, AggregationStatus, AggregationSyncService, ConnectUrlResponse,
-    ConnectorDto,
+    AggregationApiClient, AggregationStatus, AggregationSyncMode, AggregationSyncOptions,
+    AggregationSyncService, ConnectUrlResponse, ConnectorDto,
 };
 
 const PROVIDER_SYNC_START: &str = "provider:sync-start";
@@ -108,6 +108,16 @@ async fn list_provider_sync_accounts(
 #[serde(rename_all = "camelCase")]
 struct SyncProviderDataRequest {
     connection_id: Option<String>,
+    mode: Option<String>,
+    from_date: Option<String>,
+    to_date: Option<String>,
+}
+
+fn aggregation_sync_mode(value: Option<&str>) -> AggregationSyncMode {
+    match value {
+        Some(value) if value.eq_ignore_ascii_case("backfill") => AggregationSyncMode::Backfill,
+        _ => AggregationSyncMode::Incremental,
+    }
 }
 
 async fn sync_provider_data(
@@ -116,17 +126,30 @@ async fn sync_provider_data(
 ) -> ApiResult<Json<()>> {
     let service = build_service(&state)?;
     let event_bus = state.event_bus.clone();
-    let connection_id = payload.and_then(|Json(payload)| {
-        payload
-            .connection_id
+    let payload = payload.map(|Json(payload)| payload);
+    let options = AggregationSyncOptions {
+        connection_id: payload
+            .as_ref()
+            .and_then(|payload| payload.connection_id.clone())
             .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    });
+            .filter(|value| !value.is_empty()),
+        mode: aggregation_sync_mode(payload.as_ref().and_then(|payload| payload.mode.as_deref())),
+        from_date: payload
+            .as_ref()
+            .and_then(|payload| payload.from_date.clone())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        to_date: payload
+            .as_ref()
+            .and_then(|payload| payload.to_date.clone())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+    };
 
     event_bus.publish(ServerEvent::new(PROVIDER_SYNC_START));
 
     tokio::spawn(async move {
-        match service.sync(connection_id.as_deref()).await {
+        match service.sync_with_options(options).await {
             Ok(result) => {
                 event_bus.publish(ServerEvent::with_payload(
                     PROVIDER_SYNC_COMPLETE,

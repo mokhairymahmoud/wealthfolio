@@ -92,6 +92,44 @@ interface PowensMarketOrdersResponse {
   marketorders?: PowensMarketOrder[];
 }
 
+interface PowensLink {
+  href?: string | null;
+}
+
+interface PowensPaginationLinks {
+  next?: PowensLink | null;
+}
+
+interface PowensBankTransactionsResponse {
+  transactions?: PowensBankTransaction[];
+  _links?: PowensPaginationLinks | null;
+}
+
+interface PowensBankTransaction {
+  id?: number;
+  id_account?: number;
+  application_date?: string | null;
+  date?: string | null;
+  datetime?: string | null;
+  vdate?: string | null;
+  vdatetime?: string | null;
+  rdate?: string | null;
+  rdatetime?: string | null;
+  value?: string | number | null;
+  gross_value?: string | number | null;
+  type?: string | null;
+  original_wording?: string | null;
+  simplified_wording?: string | null;
+  wording?: string | null;
+  original_currency?: string | PowensCurrency | null;
+  commission?: string | number | null;
+  commission_currency?: string | PowensCurrency | null;
+  active?: boolean;
+  deleted?: string | null;
+  coming?: boolean;
+  id_cluster?: number | null;
+}
+
 interface PowensMarketOrder {
   id?: number;
   id_account?: number;
@@ -213,6 +251,20 @@ export class PowensProvider implements AggregationProvider {
 
   async listTransactions(input: ListTransactionsInput): Promise<TransactionPageDto> {
     const userId = this.resolveUserId(input.userId);
+    const rawAccount = await this.request<PowensAccount>(
+      `/users/${userId}/accounts/${input.accountId}`,
+      { auth: "user", query: { all: "true" } },
+    );
+
+    if (this.mapAccountType(rawAccount.type) === "cash") {
+      return this.listBankTransactions(input, rawAccount);
+    }
+
+    return this.listMarketOrders(input);
+  }
+
+  private async listMarketOrders(input: ListTransactionsInput): Promise<TransactionPageDto> {
+    const userId = this.resolveUserId(input.userId);
     const offset = Number(input.cursor ?? "0") || 0;
     const limit = 200;
     const response = await this.request<PowensMarketOrdersResponse>(
@@ -235,6 +287,41 @@ export class PowensProvider implements AggregationProvider {
       items,
       nextCursor: items.length === limit ? String(nextOffset) : null,
       hasMore: items.length === limit,
+    };
+  }
+
+  private async listBankTransactions(
+    input: ListTransactionsInput,
+    rawAccount: PowensAccount,
+  ): Promise<TransactionPageDto> {
+    const userId = this.resolveUserId(input.userId);
+    const limit = 1000;
+    const accountCurrency = this.currencyCode(rawAccount.currency);
+    const response = await this.request<PowensBankTransactionsResponse>(
+      input.cursor ?? `/users/${userId}/transactions`,
+      {
+        auth: "user",
+        query: input.cursor
+          ? undefined
+          : {
+              limit: String(limit),
+              filter: "application_date",
+              min_date: input.fromDate,
+              max_date: input.toDate,
+            },
+      },
+    );
+
+    const items = (response.transactions ?? [])
+      .filter((transaction) => String(transaction.id_account ?? "") === input.accountId)
+      .filter((transaction) => transaction.active !== false && !transaction.deleted)
+      .map((transaction) => this.mapBankTransaction(input.accountId, transaction, accountCurrency));
+    const nextCursor = response._links?.next?.href ?? null;
+
+    return {
+      items,
+      nextCursor,
+      hasMore: Boolean(nextCursor),
     };
   }
 
@@ -437,6 +524,45 @@ export class PowensProvider implements AggregationProvider {
     };
   }
 
+  private mapBankTransaction(
+    accountId: string,
+    transaction: PowensBankTransaction,
+    accountCurrency: string | null,
+  ): TransactionDto {
+    const amount = this.absString(transaction.value);
+    const grossAmount = this.absString(transaction.gross_value) ?? amount;
+    const currency = this.currencyCode(transaction.original_currency) ?? accountCurrency;
+
+    return {
+      id: String(transaction.id ?? ""),
+      accountId,
+      security: null,
+      bookedAt:
+        transaction.datetime ??
+        transaction.application_date ??
+        transaction.date ??
+        transaction.rdate ??
+        new Date().toISOString(),
+      settledAt: transaction.vdatetime ?? transaction.vdate ?? null,
+      transactionType: this.mapBankTransactionType(transaction.type ?? "", transaction.value),
+      quantity: null,
+      unitPrice: null,
+      grossAmount,
+      netAmount: amount,
+      fee: this.absString(transaction.commission),
+      currency,
+      description:
+        transaction.wording ??
+        transaction.simplified_wording ??
+        transaction.original_wording ??
+        null,
+      externalReference:
+        transaction.id_cluster !== null && transaction.id_cluster !== undefined
+          ? String(transaction.id_cluster)
+          : String(transaction.id ?? ""),
+    };
+  }
+
   private mapConnectionStatus(connection: PowensConnection): ConnectionDto["status"] {
     if (connection.active === false) {
       return "failed";
@@ -508,6 +634,37 @@ export class PowensProvider implements AggregationProvider {
     if (value.includes("deposit")) return "cash_deposit";
     if (value.includes("withdraw")) return "cash_withdrawal";
     if (value.includes("transfer")) return "transfer_in";
+    return "unknown";
+  }
+
+  private mapBankTransactionType(
+    type: string,
+    value: string | number | null | undefined,
+  ): TransactionDto["transactionType"] {
+    const normalizedType = type.trim().toLowerCase();
+    if (normalizedType === "profit") return "interest";
+    if (["bank", "fee", "market_fee"].includes(normalizedType)) return "fee";
+
+    const amount = this.toNumber(value);
+    if (amount !== null) {
+      if (amount > 0) return "cash_deposit";
+      if (amount < 0) return "cash_withdrawal";
+    }
+
+    if (["deposit", "payback", "payout"].includes(normalizedType)) return "cash_deposit";
+    if (
+      [
+        "withdrawal",
+        "loan_repayment",
+        "card",
+        "deferred_card",
+        "summary_card",
+        "payment",
+      ].includes(normalizedType)
+    ) {
+      return "cash_withdrawal";
+    }
+
     return "unknown";
   }
 
@@ -586,6 +743,32 @@ export class PowensProvider implements AggregationProvider {
     }
 
     return String(value);
+  }
+
+  private absString(value: string | number | null | undefined): string | null {
+    const asString = this.toStringOrNull(value);
+    if (!asString) return null;
+
+    const numeric = Number(asString);
+    if (Number.isFinite(numeric)) {
+      return String(Math.abs(numeric));
+    }
+
+    return asString.startsWith("-") || asString.startsWith("+") ? asString.slice(1) : asString;
+  }
+
+  private toNumber(value: string | number | null | undefined): number | null {
+    if (value === undefined || value === null || value === "") {
+      return null;
+    }
+
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  private currencyCode(value: string | PowensCurrency | null | undefined): string | null {
+    if (!value) return null;
+    return typeof value === "string" ? value : (value.id ?? null);
   }
 
   private resolveUserId(requestUserId: string): string {

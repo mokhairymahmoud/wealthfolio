@@ -5,6 +5,7 @@ import type {
   ProviderSyncAccount,
   ProviderSyncConnection,
   ProviderSyncStatus,
+  SyncProviderDataRequest,
 } from "@/features/provider-sync/types";
 import type { ImportRunsRequest } from "../types";
 import { invoke } from "./platform";
@@ -25,8 +26,11 @@ export async function listProviderSyncAccounts(): Promise<ProviderSyncAccount[]>
   return invoke<ProviderSyncAccount[]>("list_provider_sync_accounts");
 }
 
-export async function syncProviderData(connectionId?: string): Promise<void> {
-  return invoke<void>("sync_provider_data", { connectionId });
+export async function syncProviderData(
+  request?: string | SyncProviderDataRequest,
+): Promise<void> {
+  const payload = typeof request === "string" ? { connectionId: request } : (request ?? {});
+  return invoke<void>("sync_provider_data", payload as Record<string, unknown>);
 }
 
 export async function getProviderSyncedAccounts(): Promise<Account[]> {

@@ -22,6 +22,8 @@ export interface ListTransactionsInput {
   connectionId: string;
   accountId: string;
   cursor?: string;
+  fromDate?: string;
+  toDate?: string;
 }
 
 export interface ListHoldingsInput {
@@ -34,6 +36,8 @@ export interface TriggerSyncInput {
   userId: string;
   connectionId?: string | null;
   mode: "initial" | "incremental" | "backfill" | "repair";
+  fromDate?: string | null;
+  toDate?: string | null;
 }
 
 export interface DisableAccountInput {

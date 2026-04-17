@@ -1365,9 +1365,14 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "get_provider_sync_states":
       break;
     case "sync_provider_data": {
-      const { connectionId } = (payload ?? {}) as { connectionId?: string };
-      if (connectionId) {
-        body = JSON.stringify({ connectionId });
+      const { connectionId, mode, fromDate, toDate } = (payload ?? {}) as {
+        connectionId?: string;
+        mode?: string;
+        fromDate?: string;
+        toDate?: string;
+      };
+      if (connectionId || mode || fromDate || toDate) {
+        body = JSON.stringify({ connectionId, mode, fromDate, toDate });
       }
       break;
     }

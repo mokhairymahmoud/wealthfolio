@@ -41,6 +41,7 @@ pub use platform::Platform;
 pub use aggregation::{AccountDto as AggregationAccount, ConnectionDto as AggregationConnection};
 #[cfg(feature = "broker")]
 pub use aggregation::{
-    AggregationApiClient, AggregationProviderNotifier, AggregationStatus, AggregationSyncResult,
-    AggregationSyncService, ConnectUrlResponse, ConnectorDto,
+    AggregationApiClient, AggregationProviderNotifier, AggregationStatus, AggregationSyncMode,
+    AggregationSyncOptions, AggregationSyncResult, AggregationSyncService, ConnectUrlResponse,
+    ConnectorDto,
 };

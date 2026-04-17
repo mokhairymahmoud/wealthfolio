@@ -7,12 +7,19 @@ use crate::context::ServiceContext;
 use crate::events::{PROVIDER_SYNC_COMPLETE, PROVIDER_SYNC_ERROR, PROVIDER_SYNC_START};
 use crate::services;
 use wealthfolio_connect::{
-    AggregationAccount, AggregationConnection, AggregationStatus, BrokerSyncState,
-    ConnectUrlResponse, ConnectorDto, ImportRun,
+    AggregationAccount, AggregationConnection, AggregationStatus, AggregationSyncMode,
+    AggregationSyncOptions, BrokerSyncState, ConnectUrlResponse, ConnectorDto, ImportRun,
 };
 
 fn provider_matches(value: &str) -> bool {
     value.eq_ignore_ascii_case(&services::aggregation_provider())
+}
+
+fn aggregation_sync_mode(value: Option<&str>) -> AggregationSyncMode {
+    match value {
+        Some(value) if value.eq_ignore_ascii_case("backfill") => AggregationSyncMode::Backfill,
+        _ => AggregationSyncMode::Incremental,
+    }
 }
 
 #[tauri::command]
@@ -49,12 +56,24 @@ pub async fn sync_provider_data(
     app: AppHandle,
     state: State<'_, Arc<ServiceContext>>,
     connection_id: Option<String>,
+    mode: Option<String>,
+    from_date: Option<String>,
+    to_date: Option<String>,
 ) -> Result<(), String> {
     let sync_service = state.sync_service();
     let service = services::build_aggregation_sync_service(sync_service)?;
-    let connection_id = connection_id
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let options = AggregationSyncOptions {
+        connection_id: connection_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        mode: aggregation_sync_mode(mode.as_deref()),
+        from_date: from_date
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        to_date: to_date
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+    };
 
     // Emit start event
     app.emit(PROVIDER_SYNC_START, ())
@@ -62,7 +81,7 @@ pub async fn sync_provider_data(
 
     // Spawn the sync as a background task
     tauri::async_runtime::spawn(async move {
-        match service.sync(connection_id.as_deref()).await {
+        match service.sync_with_options(options).await {
             Ok(result) => {
                 app.emit(PROVIDER_SYNC_COMPLETE, &result)
                     .unwrap_or_else(|e| {

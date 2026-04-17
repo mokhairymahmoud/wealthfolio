@@ -11,12 +11,13 @@ use crate::{
         BrokerBalanceTotal, BrokerConnection, BrokerConnectionBrokerage, BrokerSyncServiceTrait,
         SyncAccountsResponse, SyncConnectionsResponse,
     },
-    broker_ingest::{ImportRunMode, ImportRunStatus, ImportRunSummary},
+    broker_ingest::{BrokerSyncState, ImportRunMode, ImportRunStatus, ImportRunSummary},
 };
 use wealthfolio_core::errors::{Error, Result};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const CONNECTOR_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+const INCREMENTAL_TRANSACTION_LOOKBACK_DAYS: i64 = 7;
 
 type ConnectorCache = tokio::sync::RwLock<Option<(Vec<ConnectorDto>, Instant)>>;
 
@@ -148,6 +149,21 @@ pub struct AggregationSyncResult {
     pub accounts_failed: usize,
     pub accounts_warned: usize,
     pub holdings_synced: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AggregationSyncMode {
+    #[default]
+    Incremental,
+    Backfill,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AggregationSyncOptions {
+    pub connection_id: Option<String>,
+    pub mode: AggregationSyncMode,
+    pub from_date: Option<String>,
+    pub to_date: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -307,6 +323,8 @@ impl AggregationApiClient {
         connection_id: &str,
         account_id: &str,
         cursor: Option<&str>,
+        from_date: Option<&str>,
+        to_date: Option<&str>,
     ) -> Result<TransactionPageDto> {
         let mut query = vec![
             ("userId", user_id.to_string()),
@@ -315,6 +333,12 @@ impl AggregationApiClient {
         ];
         if let Some(cursor) = cursor {
             query.push(("cursor", cursor.to_string()));
+        }
+        if let Some(from_date) = from_date {
+            query.push(("fromDate", from_date.to_string()));
+        }
+        if let Some(to_date) = to_date {
+            query.push(("toDate", to_date.to_string()));
         }
 
         self.get("/v1/transactions", &query).await
@@ -433,6 +457,18 @@ impl AggregationSyncService {
     }
 
     pub async fn sync(&self, connection_id: Option<&str>) -> Result<AggregationSyncResult> {
+        self.sync_with_options(AggregationSyncOptions {
+            connection_id: connection_id.map(ToOwned::to_owned),
+            ..Default::default()
+        })
+        .await
+    }
+
+    pub async fn sync_with_options(
+        &self,
+        options: AggregationSyncOptions,
+    ) -> Result<AggregationSyncResult> {
+        let connection_id = options.connection_id.as_deref();
         let connections = self
             .client
             .list_connections(&self.user_id, connection_id)
@@ -512,17 +548,11 @@ impl AggregationSyncService {
                 continue;
             }
 
-            if local_account.account_type.eq_ignore_ascii_case("CASH") {
-                continue;
-            }
-
-            let import_mode = match self
+            let sync_state = self
                 .sync_service
-                .get_activity_sync_state(&local_account.id)?
-            {
-                Some(state) if state.last_successful_at.is_some() => ImportRunMode::Incremental,
-                _ => ImportRunMode::Initial,
-            };
+                .get_activity_sync_state(&local_account.id)?;
+            let import_mode = transaction_import_mode(&options, sync_state.as_ref());
+            let (from_date, to_date) = transaction_sync_window(&options, sync_state.as_ref());
 
             self.sync_service
                 .mark_activity_sync_attempt(local_account.id.clone())
@@ -534,7 +564,12 @@ impl AggregationSyncService {
                 .await?;
 
             let fetched_transactions = self
-                .fetch_all_transactions(&account.connection_id, &account.id)
+                .fetch_all_transactions(
+                    &account.connection_id,
+                    &account.id,
+                    from_date.as_deref(),
+                    to_date.as_deref(),
+                )
                 .await;
 
             match fetched_transactions {
@@ -716,6 +751,8 @@ impl AggregationSyncService {
         &self,
         connection_id: &str,
         account_id: &str,
+        from_date: Option<&str>,
+        to_date: Option<&str>,
     ) -> Result<Vec<TransactionDto>> {
         let mut cursor: Option<String> = None;
         let mut items = Vec::new();
@@ -723,7 +760,14 @@ impl AggregationSyncService {
         loop {
             let page = self
                 .client
-                .list_transactions(&self.user_id, connection_id, account_id, cursor.as_deref())
+                .list_transactions(
+                    &self.user_id,
+                    connection_id,
+                    account_id,
+                    cursor.as_deref(),
+                    from_date,
+                    to_date,
+                )
                 .await?;
 
             let has_more = page.has_more;
@@ -737,6 +781,42 @@ impl AggregationSyncService {
 
         Ok(items)
     }
+}
+
+fn transaction_import_mode(
+    options: &AggregationSyncOptions,
+    state: Option<&BrokerSyncState>,
+) -> ImportRunMode {
+    if options.mode == AggregationSyncMode::Backfill {
+        return ImportRunMode::Backfill;
+    }
+
+    match state {
+        Some(state) if state.last_successful_at.is_some() => ImportRunMode::Incremental,
+        _ => ImportRunMode::Initial,
+    }
+}
+
+fn transaction_sync_window(
+    options: &AggregationSyncOptions,
+    state: Option<&BrokerSyncState>,
+) -> (Option<String>, Option<String>) {
+    if options.mode == AggregationSyncMode::Backfill {
+        return (options.from_date.clone(), options.to_date.clone());
+    }
+
+    let from_date = options.from_date.clone().or_else(|| {
+        state
+            .and_then(|state| state.last_successful_at.as_ref())
+            .map(|last_successful_at| {
+                (last_successful_at.date_naive()
+                    - chrono::Duration::days(INCREMENTAL_TRANSACTION_LOOKBACK_DAYS))
+                .format("%Y-%m-%d")
+                .to_string()
+            })
+    });
+
+    (from_date, options.to_date.clone())
 }
 
 fn map_connection_to_broker_connection(connection: &ConnectionDto) -> BrokerConnection {

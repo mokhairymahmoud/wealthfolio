@@ -8,7 +8,11 @@ import {
   listProviderSyncConnections,
   syncProviderData,
 } from "@/adapters";
-import type { ProviderSyncAccount, ProviderSyncConnection } from "@/features/provider-sync/types";
+import type {
+  ProviderSyncAccount,
+  ProviderSyncConnection,
+  SyncProviderDataRequest,
+} from "@/features/provider-sync/types";
 import type { ImportRun } from "@/features/wealthfolio-connect/types";
 import type { Account } from "@/lib/types";
 import { QueryKeys } from "@/lib/query-keys";
@@ -26,6 +30,8 @@ import {
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Badge } from "@wealthfolio/ui/components/ui/badge";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
+import { Input } from "@wealthfolio/ui/components/ui/input";
+import { Label } from "@wealthfolio/ui/components/ui/label";
 import { Separator } from "@wealthfolio/ui/components/ui/separator";
 import { formatDistanceToNow } from "date-fns";
 import { ProviderSelectionDrawer } from "@/features/provider-sync/components/provider-selection-drawer";
@@ -199,8 +205,8 @@ export default function ProviderSyncSettingsPage() {
     enabled: status?.enabled === true,
   });
 
-  const syncMutation = useMutation({
-    mutationFn: () => syncProviderData(),
+  const syncMutation = useMutation<void, Error, SyncProviderDataRequest | undefined>({
+    mutationFn: (request) => syncProviderData(request),
     onSuccess: () => {
       toast.loading("Syncing provider data...", { id: "provider-sync-start" });
     },
@@ -212,6 +218,25 @@ export default function ProviderSyncSettingsPage() {
   });
 
   const [providerDrawerOpen, setProviderDrawerOpen] = useState(false);
+  const [backfillFromDate, setBackfillFromDate] = useState("");
+  const [backfillToDate, setBackfillToDate] = useState("");
+
+  function runBackfill() {
+    if (!backfillFromDate || !backfillToDate) {
+      toast.error("Select a backfill date range");
+      return;
+    }
+    if (backfillFromDate > backfillToDate) {
+      toast.error("Backfill start date must be before end date");
+      return;
+    }
+
+    syncMutation.mutate({
+      mode: "backfill",
+      fromDate: backfillFromDate,
+      toDate: backfillToDate,
+    });
+  }
 
   if (statusLoading) {
     return (
@@ -276,7 +301,10 @@ export default function ProviderSyncSettingsPage() {
                 <Icons.Plus className="mr-2 h-4 w-4" />
                 Connect Bank
               </Button>
-              <Button onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
+              <Button
+                onClick={() => syncMutation.mutate(undefined)}
+                disabled={syncMutation.isPending}
+              >
                 {syncMutation.isPending ? (
                   <>
                     <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
@@ -292,22 +320,66 @@ export default function ProviderSyncSettingsPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border p-4">
-            <div className="text-muted-foreground text-xs uppercase tracking-wide">Connections</div>
-            <div className="mt-2 text-2xl font-semibold">{connections.length}</div>
-          </div>
-          <div className="rounded-lg border p-4">
-            <div className="text-muted-foreground text-xs uppercase tracking-wide">
-              Remote Accounts
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border p-4">
+              <div className="text-muted-foreground text-xs uppercase tracking-wide">
+                Connections
+              </div>
+              <div className="mt-2 text-2xl font-semibold">{connections.length}</div>
             </div>
-            <div className="mt-2 text-2xl font-semibold">{accounts.length}</div>
-          </div>
-          <div className="rounded-lg border p-4">
-            <div className="text-muted-foreground text-xs uppercase tracking-wide">
-              Linked Locally
+            <div className="rounded-lg border p-4">
+              <div className="text-muted-foreground text-xs uppercase tracking-wide">
+                Remote Accounts
+              </div>
+              <div className="mt-2 text-2xl font-semibold">{accounts.length}</div>
             </div>
-            <div className="mt-2 text-2xl font-semibold">{linkedAccounts.length}</div>
+            <div className="rounded-lg border p-4">
+              <div className="text-muted-foreground text-xs uppercase tracking-wide">
+                Linked Locally
+              </div>
+              <div className="mt-2 text-2xl font-semibold">{linkedAccounts.length}</div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border p-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-40 flex-1">
+                <Label htmlFor="provider-backfill-from" className="text-xs">
+                  Backfill from
+                </Label>
+                <Input
+                  id="provider-backfill-from"
+                  type="date"
+                  value={backfillFromDate}
+                  onChange={(event) => setBackfillFromDate(event.target.value)}
+                />
+              </div>
+              <div className="min-w-40 flex-1">
+                <Label htmlFor="provider-backfill-to" className="text-xs">
+                  Backfill to
+                </Label>
+                <Input
+                  id="provider-backfill-to"
+                  type="date"
+                  value={backfillToDate}
+                  onChange={(event) => setBackfillToDate(event.target.value)}
+                />
+              </div>
+              <Button
+                variant="outline"
+                onClick={runBackfill}
+                disabled={syncMutation.isPending}
+                className="shrink-0"
+              >
+                {syncMutation.isPending ? (
+                  <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Icons.History className="mr-2 h-4 w-4" />
+                )}
+                Backfill
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

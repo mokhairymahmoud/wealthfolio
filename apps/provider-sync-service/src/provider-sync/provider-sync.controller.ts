@@ -46,12 +46,17 @@ export class ProviderSyncController {
     @Query("connectionId") connectionId?: string,
     @Query("accountId") accountId?: string,
     @Query("cursor") cursor?: string,
+    @Query("fromDate") fromDate?: string,
+    @Query("toDate") toDate?: string,
   ) {
     if (!userId || !connectionId || !accountId) {
       throw new BadRequestException("userId, connectionId, and accountId are required");
     }
 
-    return this.providerSyncService.listTransactions(userId, connectionId, accountId, cursor);
+    return this.providerSyncService.listTransactions(userId, connectionId, accountId, cursor, {
+      fromDate,
+      toDate,
+    });
   }
 
   @Get("holdings")
