@@ -103,6 +103,15 @@ export const QueryKeys = {
   BROKER_SYNC_STATES: "brokerSyncStates",
   IMPORT_RUNS: "importRuns",
 
+  // Provider Sync (Powens)
+  PROVIDER_CONNECTORS: "providerConnectors",
+  PROVIDER_SYNC_STATUS: "providerSyncStatus",
+  PROVIDER_SYNC_CONNECTIONS: "providerSyncConnections",
+  PROVIDER_SYNC_ACCOUNTS: "providerSyncAccounts",
+  PROVIDER_SYNCED_ACCOUNTS: "providerSyncedAccounts",
+  PROVIDER_SYNC_STATES: "providerSyncStates",
+  PROVIDER_SYNC_IMPORT_RUNS: "providerSyncImportRuns",
+
   // Alternative Assets & Net Worth
   NET_WORTH: "netWorth",
   netWorth: (date?: string) => [QueryKeys.NET_WORTH, date ?? "current"],

@@ -1,5 +1,6 @@
 import { SyncStatusIcon } from "@/features/wealthfolio-connect/components/sync-status-icon";
-import { useAggregatedSyncStatus } from "@/features/wealthfolio-connect/hooks";
+import { useProviderAggregatedStatus } from "@/features/provider-sync/hooks";
+import type { AggregatedSyncStatus } from "@/features/wealthfolio-connect/types";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@wealthfolio/ui/components/ui/tooltip";
 import { cn } from "@wealthfolio/ui/lib/utils";
@@ -13,8 +14,11 @@ interface ConnectNavItemProps {
 
 export function ConnectNavItem({ collapsed }: ConnectNavItemProps) {
   const location = useLocation();
-  const { status, lastSyncTime } = useAggregatedSyncStatus();
+  const { status, lastSyncTime } = useProviderAggregatedStatus();
   const isActive = isPathActive(location.pathname, "/connect");
+
+  // Map provider status to the icon's expected type
+  const iconStatus: AggregatedSyncStatus = status === "disabled" ? "not_connected" : status;
 
   const tooltipContent = lastSyncTime
     ? `Connect - Last synced ${formatDistanceToNow(new Date(lastSyncTime), { addSuffix: true })}`
@@ -33,7 +37,7 @@ export function ConnectNavItem({ collapsed }: ConnectNavItemProps) {
         >
           <Link to="/connect" title="Connect" aria-current={isActive ? "page" : undefined}>
             <span aria-hidden="true">
-              <SyncStatusIcon status={status} className="size-5" />
+              <SyncStatusIcon status={iconStatus} className="size-5" />
             </span>
 
             <span

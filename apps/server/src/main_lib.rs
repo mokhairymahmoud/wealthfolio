@@ -10,8 +10,8 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 use wealthfolio_ai::{AiProviderService, AiProviderServiceTrait, ChatConfig, ChatService};
 use wealthfolio_connect::{
-    BrokerSyncService, BrokerSyncServiceTrait, CoreImportRunRepositoryAdapter,
-    ImportRunRepositoryTrait, TokenLifecycleState,
+    AggregationApiClient, AggregationProviderNotifier, BrokerSyncService, BrokerSyncServiceTrait,
+    CoreImportRunRepositoryAdapter, ImportRunRepositoryTrait, TokenLifecycleState,
 };
 use wealthfolio_core::addons::{AddonService, AddonServiceTrait};
 use wealthfolio_core::{
@@ -216,14 +216,21 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     let quote_sync_state_repository =
         Arc::new(QuoteSyncStateRepository::new(pool.clone(), writer.clone()));
 
-    let account_service = Arc::new(AccountService::new(
-        account_repo.clone(),
-        fx_service.clone(),
-        base_currency.clone(),
-        domain_event_sink.clone(),
-        asset_repository.clone(),
-        quote_sync_state_repository.clone(),
-    ));
+    let account_service = {
+        let svc = AccountService::new(
+            account_repo.clone(),
+            fx_service.clone(),
+            base_currency.clone(),
+            domain_event_sink.clone(),
+            asset_repository.clone(),
+            quote_sync_state_repository.clone(),
+        );
+        let svc = match build_provider_notifier() {
+            Some(notifier) => svc.with_provider_notifier(notifier),
+            None => svc,
+        };
+        Arc::new(svc)
+    };
     let custom_provider_repository = Arc::new(
         wealthfolio_storage_sqlite::custom_provider::CustomProviderSqliteRepository::new(
             pool.clone(),
@@ -537,4 +544,14 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     start_sync_outbox_wake_worker(sync_outbox_wake_receiver, Arc::clone(&state));
 
     Ok(state)
+}
+
+fn build_provider_notifier() -> Option<Arc<AggregationProviderNotifier>> {
+    let base_url = crate::features::aggregation_api_base_url()?;
+    let token = crate::features::aggregation_api_token()?;
+    let client = AggregationApiClient::new(&base_url, &token).ok()?;
+    Some(Arc::new(AggregationProviderNotifier::new(
+        client,
+        crate::features::aggregation_user_id(),
+    )))
 }

@@ -41,6 +41,7 @@ mod market_data;
 mod net_worth;
 mod performance;
 mod portfolio;
+mod provider_sync;
 mod secrets;
 mod settings;
 pub mod shared;
@@ -106,7 +107,8 @@ pub fn app_router(state: Arc<AppState>, config: &Config) -> Router {
         .merge(ai_providers::router())
         .merge(ai_chat::router())
         .merge(health::router())
-        .merge(custom_providers::router());
+        .merge(custom_providers::router())
+        .merge(provider_sync::router());
 
     #[cfg(feature = "device-sync")]
     {

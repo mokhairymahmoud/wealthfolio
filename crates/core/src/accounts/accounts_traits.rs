@@ -45,6 +45,11 @@ pub trait AccountRepositoryTrait: Send + Sync {
     ) -> Result<Vec<Account>>;
 }
 
+#[async_trait]
+pub trait ProviderAccountNotifier: Send + Sync {
+    async fn disable_account(&self, provider: &str, provider_account_id: &str) -> Result<()>;
+}
+
 /// Trait defining the contract for Account service operations.
 ///
 /// The service layer handles business logic and coordinates between

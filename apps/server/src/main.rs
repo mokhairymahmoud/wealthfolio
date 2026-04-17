@@ -108,6 +108,9 @@ async fn main() -> anyhow::Result<()> {
     // Start background broker sync scheduler (4-hour interval)
     scheduler::start_broker_sync_scheduler(state.clone());
 
+    // Start background provider/aggregation sync scheduler (4-hour interval, 90s stagger)
+    scheduler::start_provider_sync_scheduler(state.clone());
+
     // Start periodic market data sync (6h interval, 2min initial delay)
     let quote_svc = state.quote_service.clone();
     tokio::spawn(async move {

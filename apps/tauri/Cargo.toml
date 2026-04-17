@@ -57,7 +57,7 @@ sha2 = { workspace = true }
 rand = { workspace = true }
 
 [features]
-default = ["connect-sync", "device-sync"]
+default = ["device-sync"]
 # this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]

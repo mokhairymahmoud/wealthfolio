@@ -118,6 +118,10 @@ pub struct BrokerAccount {
     /// Whether this account is shared with the household
     #[serde(default)]
     pub shared_with_household: bool,
+
+    /// Provider type (e.g., "POWENS", "SNAPTRADE") for aggregation-sourced accounts
+    #[serde(default)]
+    pub provider_type: Option<String>,
 }
 
 fn default_sync_enabled() -> bool {

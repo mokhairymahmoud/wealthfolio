@@ -225,6 +225,20 @@ export {
   updateAlternativeAssetValuation,
 } from "../shared/alternative-assets";
 
+// Provider Sync Commands
+export {
+  listProviderConnectors,
+  getProviderSyncStatus,
+  listProviderSyncConnections,
+  listProviderSyncAccounts,
+  syncProviderData,
+  getProviderSyncedAccounts,
+  getProviderSyncStates,
+  getProviderSyncImportRuns,
+  getProviderConnectUrl,
+  deleteProviderConnection,
+} from "../shared/provider-sync";
+
 // Connect Commands (Broker + Device Sync + Auth)
 export {
   approvePairing,
@@ -321,6 +335,9 @@ export {
   listenBrokerSyncComplete,
   listenBrokerSyncError,
   listenBrokerSyncStart,
+  listenProviderSyncStart,
+  listenProviderSyncComplete,
+  listenProviderSyncError,
   listenDatabaseRestored,
   listenDeepLink,
   listenFileDrop,

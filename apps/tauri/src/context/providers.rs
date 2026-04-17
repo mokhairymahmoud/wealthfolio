@@ -165,14 +165,21 @@ pub async fn initialize_context(
         .with_event_sink(domain_event_sink.clone()),
     );
 
-    let account_service = Arc::new(AccountService::new(
-        account_repository.clone(),
-        fx_service.clone(),
-        base_currency.clone(),
-        domain_event_sink.clone(),
-        asset_repository.clone(),
-        quote_sync_state_repository.clone(),
-    ));
+    let account_service = {
+        let svc = AccountService::new(
+            account_repository.clone(),
+            fx_service.clone(),
+            base_currency.clone(),
+            domain_event_sink.clone(),
+            asset_repository.clone(),
+            quote_sync_state_repository.clone(),
+        );
+        let svc = match crate::services::build_provider_notifier() {
+            Some(notifier) => svc.with_provider_notifier(notifier),
+            None => svc,
+        };
+        Arc::new(svc)
+    };
 
     // Import run repository for tracking CSV imports
     let import_run_repository: Arc<dyn ImportRunRepositoryTrait> =

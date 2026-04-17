@@ -48,6 +48,15 @@ pub const BROKER_SYNC_COMPLETE: &str = "broker:sync-complete";
 /// Event emitted when the broker sync process fails.
 pub const BROKER_SYNC_ERROR: &str = "broker:sync-error";
 
+/// Event emitted when the provider sync process starts.
+pub const PROVIDER_SYNC_START: &str = "provider:sync-start";
+
+/// Event emitted when the provider sync process completes successfully.
+pub const PROVIDER_SYNC_COMPLETE: &str = "provider:sync-complete";
+
+/// Event emitted when the provider sync process fails.
+pub const PROVIDER_SYNC_ERROR: &str = "provider:sync-error";
+
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct PortfolioRequestPayload {
     /// Optional list of account IDs. None implies all/total accounts.

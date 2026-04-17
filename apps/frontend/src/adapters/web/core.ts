@@ -311,6 +311,17 @@ export const COMMANDS: CommandMap = {
   remove_ai_thread_tag: { method: "DELETE", path: "/ai/threads" },
   get_ai_thread_tags: { method: "GET", path: "/ai/threads" },
   update_tool_result: { method: "PATCH", path: "/ai/tool-result" },
+  // Provider Sync
+  list_provider_connectors: { method: "GET", path: "/provider-sync/connectors" },
+  get_provider_sync_status: { method: "GET", path: "/provider-sync/status" },
+  list_provider_sync_connections: { method: "GET", path: "/provider-sync/connections" },
+  list_provider_sync_accounts: { method: "GET", path: "/provider-sync/accounts" },
+  sync_provider_data: { method: "POST", path: "/provider-sync/sync" },
+  get_provider_synced_accounts: { method: "GET", path: "/provider-sync/synced-accounts" },
+  get_provider_sync_states: { method: "GET", path: "/provider-sync/sync-states" },
+  get_provider_sync_import_runs: { method: "GET", path: "/provider-sync/import-runs" },
+  get_provider_connect_url: { method: "GET", path: "/provider-sync/connect-url" },
+  delete_provider_connection: { method: "POST", path: "/provider-sync/connections/delete" },
   // Alternative Assets
   create_alternative_asset: { method: "POST", path: "/alternative-assets" },
   update_alternative_asset_valuation: { method: "PUT", path: "/alternative-assets" },
@@ -1345,6 +1356,52 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     }
     case "get_alternative_holdings":
       break;
+    // Provider Sync
+    case "list_provider_connectors":
+    case "get_provider_sync_status":
+    case "list_provider_sync_connections":
+    case "list_provider_sync_accounts":
+    case "get_provider_synced_accounts":
+    case "get_provider_sync_states":
+      break;
+    case "sync_provider_data": {
+      const { connectionId } = (payload ?? {}) as { connectionId?: string };
+      if (connectionId) {
+        body = JSON.stringify({ connectionId });
+      }
+      break;
+    }
+    case "get_provider_sync_import_runs": {
+      const { runType, limit, offset } = (payload ?? {}) as {
+        runType?: string;
+        limit?: number;
+        offset?: number;
+      };
+      const params = new URLSearchParams();
+      if (runType) params.set("runType", runType);
+      if (limit !== undefined) params.set("limit", String(limit));
+      if (offset !== undefined) params.set("offset", String(offset));
+      const qs = params.toString();
+      if (qs) url += `?${qs}`;
+      break;
+    }
+    case "get_provider_connect_url": {
+      const { connectorId, redirectUri } = (payload ?? {}) as {
+        connectorId?: string;
+        redirectUri?: string;
+      };
+      const params = new URLSearchParams();
+      if (connectorId) params.set("connectorId", connectorId);
+      if (redirectUri) params.set("redirectUri", redirectUri);
+      const qs = params.toString();
+      if (qs) url += `?${qs}`;
+      break;
+    }
+    case "delete_provider_connection": {
+      const { connectionId } = payload as { connectionId: string };
+      body = JSON.stringify({ connectionId });
+      break;
+    }
     // AI Providers
     case "get_ai_providers":
       break;

@@ -1,0 +1,134 @@
+{
+  "connectors": [
+    {
+      "id": "powens-interactive-brokers",
+      "provider": "powens",
+      "name": "Interactive Brokers",
+      "country": "FR",
+      "capabilities": ["accounts", "transactions"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn_demo_ibkr",
+      "provider": "powens",
+      "connectorId": "powens-interactive-brokers",
+      "connectorName": "Interactive Brokers",
+      "institutionName": "Interactive Brokers",
+      "status": "connected",
+      "lastSyncedAt": "2026-04-05T08:30:00.000Z"
+    }
+  ],
+  "accounts": [
+    {
+      "id": "acc_demo_brokerage",
+      "connectionId": "conn_demo_ibkr",
+      "externalAccountId": "powens-account-001",
+      "name": "IBKR Margin",
+      "accountType": "brokerage",
+      "currency": "USD",
+      "institutionName": "Interactive Brokers",
+      "mask": "001"
+    },
+    {
+      "id": "acc_demo_retirement",
+      "connectionId": "conn_demo_ibkr",
+      "externalAccountId": "powens-account-002",
+      "name": "IBKR Retirement",
+      "accountType": "retirement",
+      "currency": "EUR",
+      "institutionName": "Interactive Brokers",
+      "mask": "002"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "txn_demo_1",
+      "accountId": "acc_demo_brokerage",
+      "security": {
+        "id": "sec_aapl",
+        "symbol": "AAPL",
+        "isin": "US0378331005",
+        "name": "Apple Inc.",
+        "currency": "USD",
+        "exchange": "XNAS"
+      },
+      "bookedAt": "2026-03-01T14:30:00.000Z",
+      "settledAt": "2026-03-03T14:30:00.000Z",
+      "type": "buy",
+      "quantity": "5",
+      "unitPrice": "210.25",
+      "grossAmount": "1051.25",
+      "netAmount": "1052.50",
+      "fee": "1.25",
+      "currency": "USD",
+      "description": "Buy Apple",
+      "externalReference": "powens-ref-1"
+    },
+    {
+      "id": "txn_demo_2",
+      "accountId": "acc_demo_brokerage",
+      "security": {
+        "id": "sec_msft",
+        "symbol": "MSFT",
+        "isin": "US5949181045",
+        "name": "Microsoft Corp.",
+        "currency": "USD",
+        "exchange": "XNAS"
+      },
+      "bookedAt": "2026-03-15T14:30:00.000Z",
+      "settledAt": "2026-03-17T14:30:00.000Z",
+      "type": "dividend",
+      "quantity": null,
+      "unitPrice": null,
+      "grossAmount": "12.50",
+      "netAmount": "12.50",
+      "fee": null,
+      "currency": "USD",
+      "description": "Dividend Microsoft",
+      "externalReference": "powens-ref-2"
+    },
+    {
+      "id": "txn_demo_3",
+      "accountId": "acc_demo_retirement",
+      "security": {
+        "id": "sec_mc",
+        "symbol": "MC",
+        "isin": "FR0000121014",
+        "name": "LVMH",
+        "currency": "EUR",
+        "exchange": "XPAR"
+      },
+      "bookedAt": "2026-03-20T09:00:00.000Z",
+      "settledAt": "2026-03-24T09:00:00.000Z",
+      "type": "buy",
+      "quantity": "2",
+      "unitPrice": "710.00",
+      "grossAmount": "1420.00",
+      "netAmount": "1422.00",
+      "fee": "2.00",
+      "currency": "EUR",
+      "description": "Buy LVMH",
+      "externalReference": "powens-ref-3"
+    }
+  ],
+  "syncRuns": [
+    {
+      "id": "fixture-run-1",
+      "connectionId": "conn_demo_ibkr",
+      "mode": "incremental",
+      "status": "applied",
+      "startedAt": "2026-04-05T08:30:00.000Z",
+      "completedAt": "2026-04-05T08:30:02.000Z",
+      "summary": {
+        "accountsDiscovered": 2,
+        "holdingsFetched": 0,
+        "transactionsFetched": 3,
+        "transactionsImported": 3,
+        "transactionsSkipped": 0,
+        "assetsCreated": 0,
+        "errors": 0
+      }
+    }
+  ]
+}

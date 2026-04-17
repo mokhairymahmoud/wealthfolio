@@ -72,6 +72,12 @@ const settingsSections = [
         icon: <Icons.CloudSync2 className="size-6 text-blue-400" />,
       },
       {
+        title: "Provider Sync",
+        href: "provider-sync",
+        subtitle: "External aggregation service",
+        icon: <Icons.RefreshCw className="size-5" />,
+      },
+      {
         title: "Market Data",
         href: "market-data",
         subtitle: "Providers, sync, and imports",

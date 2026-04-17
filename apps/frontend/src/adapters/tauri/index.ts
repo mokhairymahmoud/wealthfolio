@@ -103,6 +103,9 @@ export * from "../shared/secrets";
 // Connect Commands (Broker + Device Sync + Auth)
 export * from "../shared/connect";
 
+// Provider Sync Commands
+export * from "../shared/provider-sync";
+
 // AI Providers Commands
 export * from "../shared/ai-providers";
 
@@ -174,6 +177,9 @@ export {
   listenBrokerSyncStart,
   listenBrokerSyncComplete,
   listenBrokerSyncError,
+  listenProviderSyncStart,
+  listenProviderSyncComplete,
+  listenProviderSyncError,
   listenNavigateToRoute,
   listenDeepLink,
 } from "./events";

@@ -4,7 +4,9 @@ use log::{debug, info, warn};
 use std::sync::{Arc, RwLock};
 
 use super::accounts_model::{Account, AccountUpdate, NewAccount};
-use super::accounts_traits::{AccountRepositoryTrait, AccountServiceTrait};
+use super::accounts_traits::{
+    AccountRepositoryTrait, AccountServiceTrait, ProviderAccountNotifier,
+};
 use crate::assets::AssetRepositoryTrait;
 use crate::errors::Result;
 use crate::events::{CurrencyChange, DomainEvent, DomainEventSink};
@@ -19,6 +21,7 @@ pub struct AccountService {
     event_sink: Arc<dyn DomainEventSink>,
     asset_repository: Arc<dyn AssetRepositoryTrait>,
     sync_state_store: Arc<dyn SyncStateStore>,
+    provider_notifier: Option<Arc<dyn ProviderAccountNotifier>>,
 }
 
 impl AccountService {
@@ -38,7 +41,13 @@ impl AccountService {
             event_sink,
             asset_repository,
             sync_state_store,
+            provider_notifier: None,
         }
+    }
+
+    pub fn with_provider_notifier(mut self, notifier: Arc<dyn ProviderAccountNotifier>) -> Self {
+        self.provider_notifier = Some(notifier);
+        self
     }
 }
 
@@ -177,6 +186,33 @@ impl AccountServiceTrait for AccountService {
 
     /// Deletes an account by its ID.
     async fn delete_account(&self, account_id: &str) -> Result<()> {
+        // Best-effort: disable provider-synced account on the remote side
+        if let Some(notifier) = &self.provider_notifier {
+            match self.repository.get_by_id(account_id) {
+                Ok(account) => {
+                    if let (Some(provider), Some(provider_account_id)) =
+                        (&account.provider, &account.provider_account_id)
+                    {
+                        if let Err(e) = notifier
+                            .disable_account(provider, provider_account_id)
+                            .await
+                        {
+                            warn!(
+                                "Failed to disable provider account {} on {}: {}",
+                                provider_account_id, provider, e
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to fetch account before deletion for provider cleanup: {}",
+                        e
+                    );
+                }
+            }
+        }
+
         self.repository.delete(account_id).await?;
 
         // Clean up orphaned assets (activities are already CASCADE-deleted)

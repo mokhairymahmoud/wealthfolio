@@ -53,6 +53,9 @@ export function useAccountMutations({ onSuccess = () => undefined }: UseAccountM
     onSuccess: () => {
       handleSuccess();
       queryClient.invalidateQueries({ queryKey: [QueryKeys.ACCOUNTS] });
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.PROVIDER_SYNCED_ACCOUNTS] });
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.PROVIDER_SYNC_STATES] });
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.PROVIDER_SYNC_IMPORT_RUNS] });
     },
     onError: (e) => {
       logger.error(`Error deleting account: ${e}`);

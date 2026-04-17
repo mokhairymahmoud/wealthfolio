@@ -108,3 +108,21 @@ export const listenDeepLink = async <T>(handler: EventCallback<T>): Promise<Unli
   const unlisten = await listen<T>("deep-link-received", adaptCallback(handler));
   return adaptUnlisten(unlisten);
 };
+
+// Provider sync events
+export async function listenProviderSyncStart<T>(handler: EventCallback<T>): Promise<UnlistenFn> {
+  const unlisten = await listen<T>("provider:sync-start", adaptCallback(handler));
+  return adaptUnlisten(unlisten);
+}
+
+export async function listenProviderSyncComplete<T>(
+  handler: EventCallback<T>,
+): Promise<UnlistenFn> {
+  const unlisten = await listen<T>("provider:sync-complete", adaptCallback(handler));
+  return adaptUnlisten(unlisten);
+}
+
+export async function listenProviderSyncError<T>(handler: EventCallback<T>): Promise<UnlistenFn> {
+  const unlisten = await listen<T>("provider:sync-error", adaptCallback(handler));
+  return adaptUnlisten(unlisten);
+}

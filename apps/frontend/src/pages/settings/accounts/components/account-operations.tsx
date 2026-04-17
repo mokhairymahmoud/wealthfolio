@@ -86,7 +86,11 @@ export function AccountOperations({
             <AlertDialogTitle>
               Are you sure you want to delete this account and related activities?
             </AlertDialogTitle>
-            <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+            <AlertDialogDescription>
+              {account.providerAccountId
+                ? "This account is synced via a provider and will be disconnected. This action cannot be undone."
+                : "This action cannot be undone."}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

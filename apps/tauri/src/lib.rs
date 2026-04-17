@@ -119,12 +119,17 @@ mod desktop {
         // The frontend will trigger the initial portfolio update and update check after it's mounted
         emit_app_ready(&handle);
 
-        // Trigger startup sync (async, non-blocking)
-        // After this, user manually triggers sync via button
-        let startup_handle = handle.clone();
-        let startup_context = Arc::clone(&context);
+        // Start periodic broker sync (immediate first sync, then every 4h)
+        let broker_handle = handle.clone();
+        let broker_context = Arc::clone(&context);
         tauri::async_runtime::spawn(async move {
-            scheduler::run_startup_sync(&startup_handle, &startup_context).await;
+            scheduler::run_periodic_broker_sync(&broker_handle, &broker_context).await;
+        });
+
+        // Start periodic provider/aggregation sync (90s stagger, then every 4h)
+        let provider_context = Arc::clone(&context);
+        tauri::async_runtime::spawn(async move {
+            scheduler::run_periodic_provider_sync(&provider_context).await;
         });
 
         // Start periodic market data sync (6h interval, 2min initial delay)
@@ -501,6 +506,17 @@ pub fn run() {
             commands::addon::install_addon_from_staging,
             commands::addon::clear_addon_staging,
             commands::addon::submit_addon_rating,
+            // Provider sync commands
+            commands::provider_sync::list_provider_connectors,
+            commands::provider_sync::get_provider_sync_status,
+            commands::provider_sync::list_provider_sync_connections,
+            commands::provider_sync::list_provider_sync_accounts,
+            commands::provider_sync::sync_provider_data,
+            commands::provider_sync::get_provider_synced_accounts,
+            commands::provider_sync::get_provider_sync_states,
+            commands::provider_sync::get_provider_sync_import_runs,
+            commands::provider_sync::get_provider_connect_url,
+            commands::provider_sync::delete_provider_connection,
             // Sync commands
             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
             commands::wealthfolio_connect::store_sync_session,

@@ -54,7 +54,7 @@ semver = "1"
 hyper = { version = "0.14", features = ["full"] }
 
 [features]
-default = ["connect-sync", "device-sync"]
+default = ["device-sync"]
 connect-sync = []
 device-sync = []
 

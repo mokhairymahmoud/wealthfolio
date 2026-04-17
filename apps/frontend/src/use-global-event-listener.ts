@@ -10,6 +10,8 @@ import {
   listenPortfolioUpdateComplete,
   listenPortfolioUpdateError,
   listenPortfolioUpdateStart,
+  listenProviderSyncComplete,
+  listenProviderSyncError,
   logger,
   updatePortfolio,
 } from "@/adapters";
@@ -274,6 +276,77 @@ const useGlobalEventListener = () => {
       });
     };
 
+    const handleProviderSyncComplete = (event: {
+      payload: {
+        provider: string;
+        transactions_fetched: number;
+        transactions_imported: number;
+        assets_created: number;
+        accounts_synced: {
+          synced: number;
+          created: number;
+          updated: number;
+          skipped: number;
+          new_accounts_info?: {
+            local_account_id: string;
+            provider_account_id: string;
+            default_name: string;
+            currency: string;
+            institution_name?: string;
+          }[];
+          newAccountsInfo?: {
+            localAccountId: string;
+            providerAccountId: string;
+            defaultName: string;
+            currency: string;
+            institutionName?: string;
+          }[];
+        };
+        holdings_synced: number;
+      };
+    }) => {
+      toast.dismiss("provider-sync-start");
+      toast.dismiss("provider-callback-sync");
+      queryClientRef.current.invalidateQueries();
+
+      const { provider, transactions_imported, assets_created, accounts_synced, holdings_synced } =
+        event.payload || {};
+
+      const newAccounts = accounts_synced?.newAccountsInfo ?? accounts_synced?.new_accounts_info;
+      if (newAccounts && newAccounts.length > 0) {
+        const detail = newAccounts.map((account) => ({
+          localAccountId:
+            "localAccountId" in account ? account.localAccountId : account.local_account_id,
+        }));
+        window.dispatchEvent(new CustomEvent("open-new-accounts-modal", { detail }));
+        toast.info(`${newAccounts.length} new account(s) found`, {
+          description: "Configure tracking mode for your new accounts.",
+          duration: 8000,
+        });
+        return;
+      }
+
+      const parts: string[] = [];
+      if (accounts_synced?.created > 0) parts.push(`${accounts_synced.created} new accounts`);
+      if (transactions_imported > 0) parts.push(`${transactions_imported} transactions`);
+      if (holdings_synced > 0) parts.push(`${holdings_synced} holdings updated`);
+      if (assets_created > 0) parts.push(`${assets_created} new assets`);
+
+      toast.success(`${provider ?? "Provider"} Sync Complete`, {
+        description: parts.length > 0 ? parts.join(" · ") : "Everything is up to date",
+        duration: 5000,
+      });
+    };
+
+    const handleProviderSyncError = (event: { payload: { error: string } }) => {
+      const { error } = event.payload || { error: "Unknown error" };
+      toast.dismiss("provider-sync-start");
+      toast.error("Provider Sync Failed", {
+        description: error,
+        duration: 10000,
+      });
+    };
+
     const setupListeners = async () => {
       const unlistenPortfolioSyncStart = await listenPortfolioUpdateStart(
         handlePortfolioUpdateStart,
@@ -290,6 +363,10 @@ const useGlobalEventListener = () => {
       const unlistenDatabaseRestored = await listenDatabaseRestored(handleDatabaseRestored);
       const unlistenBrokerSyncComplete = await listenBrokerSyncComplete(handleBrokerSyncComplete);
       const unlistenBrokerSyncError = await listenBrokerSyncError(handleBrokerSyncError);
+      const unlistenProviderSyncComplete = await listenProviderSyncComplete(
+        handleProviderSyncComplete,
+      );
+      const unlistenProviderSyncError = await listenProviderSyncError(handleProviderSyncError);
 
       const cleanup = () => {
         unlistenPortfolioSyncStart();
@@ -302,6 +379,8 @@ const useGlobalEventListener = () => {
         unlistenDatabaseRestored();
         unlistenBrokerSyncComplete();
         unlistenBrokerSyncError();
+        unlistenProviderSyncComplete();
+        unlistenProviderSyncError();
       };
 
       // If unmounted while setting up, clean up immediately

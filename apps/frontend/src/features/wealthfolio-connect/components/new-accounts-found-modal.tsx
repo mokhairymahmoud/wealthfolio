@@ -41,6 +41,8 @@ interface NewAccountsFoundModalProps {
   /** Full account objects from the backend */
   accounts: Account[];
   onComplete?: () => void;
+  /** Optional override for the sync function called after saving. Defaults to syncBrokerData. */
+  onSyncAfterSave?: () => void;
 }
 
 export function NewAccountsFoundModal({
@@ -48,6 +50,7 @@ export function NewAccountsFoundModal({
   onOpenChange,
   accounts,
   onComplete,
+  onSyncAfterSave,
 }: NewAccountsFoundModalProps) {
   const queryClient = useQueryClient();
   const [isSaving, setIsSaving] = useState(false);
@@ -107,8 +110,12 @@ export function NewAccountsFoundModal({
       onOpenChange(false);
       onComplete?.();
 
-      // Trigger broker sync to import data for the now-configured accounts
-      syncBrokerData();
+      // Trigger sync to import data for the now-configured accounts
+      if (onSyncAfterSave) {
+        onSyncAfterSave();
+      } else {
+        syncBrokerData();
+      }
     } catch (error) {
       toast.error("Failed to save accounts", {
         description: String(error),

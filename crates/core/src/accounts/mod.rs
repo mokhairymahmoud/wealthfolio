@@ -9,7 +9,7 @@ mod accounts_traits;
 pub use accounts_constants::*;
 pub use accounts_model::{Account, AccountUpdate, NewAccount, TrackingMode};
 pub use accounts_service::AccountService;
-pub use accounts_traits::{AccountRepositoryTrait, AccountServiceTrait};
+pub use accounts_traits::{AccountRepositoryTrait, AccountServiceTrait, ProviderAccountNotifier};
 
 #[cfg(test)]
 mod accounts_model_tests;

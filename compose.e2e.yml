@@ -1,0 +1,72 @@
+services:
+  provider-sync:
+    build:
+      context: ./apps/provider-sync-service
+      dockerfile: Dockerfile
+    container_name: wealthfolio-provider-sync
+    restart: unless-stopped
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3001"
+      SERVICE_TOKEN: "dev-token"
+      # Use fixture provider for deterministic E2E testing
+      AGGREGATION_PROVIDER: "fixtures"
+      FIXTURE_DATA_FILE: "./src/fixtures/sample-provider-data.json"
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:3001/v1/healthz",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  wealthfolio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wealthfolio-e2e
+    restart: unless-stopped
+    depends_on:
+      provider-sync:
+        condition: service_healthy
+    environment:
+      WF_LISTEN_ADDR: "0.0.0.0:8088"
+      WF_DB_PATH: "/data/wealthfolio.db"
+      WF_SECRET_KEY: "0123456789abcdef0123456789abcde-"
+      WF_AUTH_REQUIRED: "false"
+      # Provider sync configuration
+      WF_AGGREGATION_ENABLED: "true"
+      WF_AGGREGATION_API_URL: "http://provider-sync:3001"
+      WF_AGGREGATION_API_TOKEN: "dev-token"
+      WF_AGGREGATION_PROVIDER: "powens"
+      WF_AGGREGATION_USER_ID: "local-user"
+    volumes:
+      - e2e-data:/data
+    ports:
+      - "8088:8088"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8088/api/v1/healthz",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  e2e-data:

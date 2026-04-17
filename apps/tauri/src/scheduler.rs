@@ -1,6 +1,7 @@
-//! Startup sync for broker data.
+//! Background schedulers for periodic broker and provider sync.
 //!
-//! Syncs broker data once on app startup. After that, user manually triggers sync.
+//! Broker sync runs immediately on startup, then every 4 hours.
+//! Provider (aggregation) sync runs after a 90-second stagger, then every 4 hours.
 
 #[cfg(feature = "connect-sync")]
 use std::sync::Arc;
@@ -19,32 +20,120 @@ use wealthfolio_core::quotes::MarketSyncMode;
 use crate::commands::brokers_sync::perform_broker_sync;
 use crate::context::ServiceContext;
 
-/// Runs broker sync once on startup (async, non-blocking).
-///
-/// This function:
-/// - Checks if user's plan includes broker sync
-/// - Performs the sync silently (no toast - user didn't request it)
-/// - Triggers portfolio update if activities were synced
+/// Default sync interval: 4 hours.
 #[cfg(feature = "connect-sync")]
-pub async fn run_startup_sync(handle: &AppHandle, context: &Arc<ServiceContext>) {
-    info!("Running startup broker sync...");
+const BROKER_SYNC_INTERVAL_SECS: u64 = 4 * 60 * 60;
+
+/// Provider sync stagger delay: 90 seconds after app start.
+const PROVIDER_SYNC_INITIAL_DELAY_SECS: u64 = 90;
+
+/// Default provider sync interval: 4 hours.
+const PROVIDER_SYNC_INTERVAL_SECS: u64 = 4 * 60 * 60;
+
+/// Runs broker sync periodically: once immediately, then every 4 hours.
+#[cfg(feature = "connect-sync")]
+pub async fn run_periodic_broker_sync(handle: &AppHandle, context: &Arc<ServiceContext>) {
+    let mut consecutive_failures: u32 = 0;
+
+    // First sync immediately (startup)
+    match run_single_broker_sync(handle, context).await {
+        Ok(()) => consecutive_failures = 0,
+        Err(()) => consecutive_failures += 1,
+    }
+
+    // Periodic loop
+    loop {
+        let sleep_secs = if consecutive_failures > 0 {
+            backoff_secs(BROKER_SYNC_INTERVAL_SECS, consecutive_failures)
+        } else {
+            BROKER_SYNC_INTERVAL_SECS
+        };
+        tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
+
+        match run_single_broker_sync(handle, context).await {
+            Ok(()) => consecutive_failures = 0,
+            Err(()) => consecutive_failures += 1,
+        }
+    }
+}
+
+#[cfg(not(feature = "connect-sync"))]
+pub async fn run_periodic_broker_sync(
+    _handle: &AppHandle,
+    _context: &std::sync::Arc<ServiceContext>,
+) {
+}
+
+/// Runs provider/aggregation sync periodically (e.g., Powens).
+/// Staggered 90 seconds from broker sync to avoid contention.
+pub async fn run_periodic_provider_sync(context: &std::sync::Arc<ServiceContext>) {
+    use crate::services::aggregation_service::{
+        aggregation_enabled, build_aggregation_sync_service,
+    };
+    use log::{debug, info, warn};
+
+    tokio::time::sleep(std::time::Duration::from_secs(
+        PROVIDER_SYNC_INITIAL_DELAY_SECS,
+    ))
+    .await;
+
+    let mut consecutive_failures: u32 = 0;
+
+    loop {
+        if aggregation_enabled() {
+            match build_aggregation_sync_service(context.sync_service()) {
+                Ok(service) => match service.sync(None).await {
+                    Ok(result) => {
+                        info!(
+                            "Scheduled provider sync completed: {} transactions imported",
+                            result.transactions_imported
+                        );
+                        consecutive_failures = 0;
+                    }
+                    Err(e) => {
+                        warn!("Scheduled provider sync failed: {}", e);
+                        consecutive_failures += 1;
+                    }
+                },
+                Err(e) => {
+                    debug!("Scheduled provider sync skipped: {}", e);
+                    // Config error, not a transient failure — don't backoff
+                }
+            }
+        } else {
+            debug!("Scheduled provider sync skipped: aggregation not enabled");
+        }
+
+        let sleep_secs = if consecutive_failures > 0 {
+            backoff_secs(PROVIDER_SYNC_INTERVAL_SECS, consecutive_failures)
+        } else {
+            PROVIDER_SYNC_INTERVAL_SECS
+        };
+        tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
+    }
+}
+
+/// Runs a single broker sync cycle. Returns Ok(()) on success/skip, Err(()) on failure.
+#[cfg(feature = "connect-sync")]
+async fn run_single_broker_sync(
+    handle: &AppHandle,
+    context: &Arc<ServiceContext>,
+) -> Result<(), ()> {
+    info!("Running scheduled broker sync...");
 
     // Check if user's plan includes broker sync
     match context.connect_service().has_broker_sync().await {
-        Ok(true) => {
-            // User has broker sync, proceed
-        }
+        Ok(true) => {}
         Ok(false) => {
-            debug!("Startup sync skipped: plan does not include broker sync");
-            return;
+            debug!("Scheduled broker sync skipped: plan does not include broker sync");
+            return Ok(());
         }
         Err(e) => {
-            // If we can't check (no token, network error, etc.), skip silently
             debug!(
-                "Startup sync skipped: could not verify broker sync access ({})",
+                "Scheduled broker sync skipped: could not verify broker sync access ({})",
                 e
             );
-            return;
+            return Ok(());
         }
     }
 
@@ -52,19 +141,15 @@ pub async fn run_startup_sync(handle: &AppHandle, context: &Arc<ServiceContext>)
     match perform_broker_sync(context, Some(handle)).await {
         Ok(result) => {
             info!(
-                "Startup sync completed: success={}, message={}",
+                "Scheduled broker sync completed: success={}, message={}",
                 result.success, result.message
             );
 
-            // Note: broker:sync-complete event is emitted by the orchestrator via TauriProgressReporter
-
-            // Trigger portfolio update if sync was successful
-            // Note: Asset enrichment is handled automatically via domain events (AssetsCreated)
             if result.success {
                 if let Some(ref activities) = result.activities_synced {
                     if activities.activities_upserted > 0 {
                         info!(
-                            "Triggering portfolio update after startup sync ({} activities synced)",
+                            "Triggering portfolio update after broker sync ({} activities synced)",
                             activities.activities_upserted
                         );
                         crate::events::emit_portfolio_trigger_recalculate(
@@ -91,18 +176,23 @@ pub async fn run_startup_sync(handle: &AppHandle, context: &Arc<ServiceContext>)
                     }
                 }
             }
+            Ok(())
         }
         Err(e) => {
-            // Check if this is an auth error (user not logged in)
             if e.contains("No access token") || e.contains("not authenticated") {
-                debug!("Startup sync skipped: user not authenticated");
+                debug!("Scheduled broker sync skipped: user not authenticated");
+                Ok(())
             } else {
-                warn!("Startup sync failed: {}", e);
-                // Note: broker:sync-error event is emitted by the orchestrator via TauriProgressReporter
+                warn!("Scheduled broker sync failed: {}", e);
+                Err(())
             }
         }
     }
 }
 
-#[cfg(not(feature = "connect-sync"))]
-pub async fn run_startup_sync(_handle: &AppHandle, _context: &std::sync::Arc<ServiceContext>) {}
+/// Computes backoff sleep duration: min(normal_interval, 60s * 2^failures), capped at 6 doublings.
+fn backoff_secs(normal_interval_secs: u64, consecutive_failures: u32) -> u64 {
+    let capped = consecutive_failures.min(6);
+    let backoff = 60u64.saturating_mul(1u64 << capped);
+    backoff.min(normal_interval_secs)
+}

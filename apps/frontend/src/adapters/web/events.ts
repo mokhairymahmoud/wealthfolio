@@ -183,3 +183,16 @@ export const listenBrokerSyncComplete = <T>(handler: EventCallback<T>): Promise<
 export const listenBrokerSyncError = <T>(handler: EventCallback<T>): Promise<UnlistenFn> => {
   return portfolioEventBridge.listen("broker:sync-error", handler);
 };
+
+// Provider sync events
+export const listenProviderSyncStart = <T>(handler: EventCallback<T>): Promise<UnlistenFn> => {
+  return portfolioEventBridge.listen("provider:sync-start", handler);
+};
+
+export const listenProviderSyncComplete = <T>(handler: EventCallback<T>): Promise<UnlistenFn> => {
+  return portfolioEventBridge.listen("provider:sync-complete", handler);
+};
+
+export const listenProviderSyncError = <T>(handler: EventCallback<T>): Promise<UnlistenFn> => {
+  return portfolioEventBridge.listen("provider:sync-error", handler);
+};

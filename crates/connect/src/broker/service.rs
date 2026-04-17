@@ -20,7 +20,9 @@ use chrono::{DateTime, Months, NaiveDate, Utc};
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 use std::collections::{HashMap, HashSet};
-use wealthfolio_core::accounts::{Account, AccountServiceTrait, NewAccount, TrackingMode};
+use wealthfolio_core::accounts::{
+    Account, AccountServiceTrait, AccountUpdate, NewAccount, TrackingMode,
+};
 use wealthfolio_core::activities::{
     compute_idempotency_key, ActivityRepositoryTrait, ActivityServiceTrait, ActivityUpsert,
     NewActivity,
@@ -106,6 +108,117 @@ impl BrokerSyncService {
         self.event_sink = event_sink;
         self
     }
+
+    /// Resolve the provider name for an account, falling back to the default.
+    fn provider_for_account(&self, account_id: &str) -> String {
+        self.account_service
+            .get_account(account_id)
+            .ok()
+            .and_then(|a| a.provider)
+            .map(|p| p.to_ascii_lowercase())
+            .unwrap_or_else(|| DEFAULT_BROKERAGE_PROVIDER.to_string())
+    }
+
+    fn inferred_tracking_mode_for_account_type(account_type: &str) -> Option<TrackingMode> {
+        match account_type.trim().to_ascii_uppercase().as_str() {
+            "CASH" => Some(TrackingMode::Transactions),
+            "OTHER" => None,
+            _ => Some(TrackingMode::Holdings),
+        }
+    }
+
+    async fn apply_inferred_tracking_mode_if_needed(
+        &self,
+        account: &Account,
+        account_type: &str,
+    ) -> Result<Option<Account>> {
+        if account.tracking_mode != TrackingMode::NotSet {
+            return Ok(None);
+        }
+
+        let Some(tracking_mode) = Self::inferred_tracking_mode_for_account_type(account_type)
+        else {
+            return Ok(None);
+        };
+
+        let updated = self
+            .account_service
+            .update_account(AccountUpdate {
+                id: Some(account.id.clone()),
+                name: account.name.clone(),
+                account_type: account.account_type.clone(),
+                group: account.group.clone(),
+                is_default: account.is_default,
+                is_active: account.is_active,
+                platform_id: account.platform_id.clone(),
+                account_number: account.account_number.clone(),
+                meta: account.meta.clone(),
+                provider: account.provider.clone(),
+                provider_account_id: account.provider_account_id.clone(),
+                is_archived: Some(account.is_archived),
+                tracking_mode: Some(tracking_mode),
+            })
+            .await?;
+
+        Ok(Some(updated))
+    }
+
+    async fn relink_existing_account(
+        &self,
+        account: &Account,
+        broker_account: &BrokerAccount,
+        provider_account_id: &str,
+        account_type: &str,
+    ) -> Result<Account> {
+        let tracking_mode = if account.tracking_mode == TrackingMode::NotSet {
+            Self::inferred_tracking_mode_for_account_type(account_type)
+                .unwrap_or(account.tracking_mode)
+        } else {
+            account.tracking_mode
+        };
+
+        self.account_service
+            .update_account(AccountUpdate {
+                id: Some(account.id.clone()),
+                name: account.name.clone(),
+                account_type: account.account_type.clone(),
+                group: account.group.clone(),
+                is_default: account.is_default,
+                is_active: account.is_active,
+                platform_id: account.platform_id.clone(),
+                account_number: broker_account
+                    .account_number
+                    .clone()
+                    .or_else(|| account.account_number.clone()),
+                meta: account.meta.clone(),
+                provider: account.provider.clone().or_else(|| broker_account.provider_type.clone()),
+                provider_account_id: Some(provider_account_id.to_string()),
+                is_archived: Some(account.is_archived),
+                tracking_mode: Some(tracking_mode),
+            })
+            .await
+    }
+
+    fn find_relink_candidate<'a>(
+        existing_accounts: &'a [Account],
+        provider: Option<&str>,
+        platform_id: Option<&str>,
+        account_number: Option<&str>,
+        currency: &str,
+    ) -> Option<&'a Account> {
+        let account_number = account_number.map(str::trim).filter(|value| !value.is_empty())?;
+
+        existing_accounts.iter().find(|account| {
+            account
+                .provider
+                .as_deref()
+                .zip(provider)
+                .is_some_and(|(left, right)| left.eq_ignore_ascii_case(right))
+                && account.platform_id.as_deref() == platform_id
+                && account.currency.eq_ignore_ascii_case(currency)
+                && account.account_number.as_deref() == Some(account_number)
+        })
+    }
 }
 
 #[async_trait]
@@ -178,7 +291,7 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
         broker_accounts: Vec<BrokerAccount>,
     ) -> Result<SyncAccountsResponse> {
         let mut created = 0;
-        let updated = 0; // Reserved for future use when we implement account updates
+        let mut updated = 0;
         let mut skipped = 0;
         let mut created_accounts: Vec<(String, String)> = Vec::new();
         let mut new_accounts_info: Vec<NewAccountInfo> = Vec::new();
@@ -187,7 +300,8 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
         // Get all existing accounts with provider_account_id to check for updates
         let existing_accounts = self.account_service.get_all_accounts()?;
         let provider_account_id_map: std::collections::HashMap<String, Account> = existing_accounts
-            .into_iter()
+            .iter()
+            .cloned()
             .filter_map(|a| a.provider_account_id.clone().map(|id| (id, a)))
             .collect();
 
@@ -206,38 +320,75 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
             };
 
             // Check if account already exists by provider_account_id
-            if let Some(_existing) = provider_account_id_map.get(&provider_account_id) {
-                // Account exists - for now we skip updates to preserve user customizations
-                // In the future, we might want to update certain fields selectively
+            let account_type = broker_account.get_account_type();
+            if let Some(existing) = provider_account_id_map.get(&provider_account_id) {
+                if self
+                    .apply_inferred_tracking_mode_if_needed(existing, &account_type)
+                    .await?
+                    .is_some()
+                {
+                    updated += 1;
+                } else {
+                    skipped += 1;
+                }
+
                 debug!(
                     "Account already synced, skipping: {} ({})",
                     broker_account.display_name(),
                     provider_account_id
                 );
-                skipped += 1;
                 continue;
             }
 
             // Determine platform_id from institution_name
             // We need to find the platform that matches this broker account's connection
             let platform_id = self.find_platform_for_account(broker_account)?;
+            let currency = broker_account.get_currency(base_currency.as_deref());
+            let provider = broker_account
+                .provider_type
+                .clone()
+                .unwrap_or_else(|| DEFAULT_BROKERAGE_PROVIDER.to_uppercase());
 
-            // Create new broker account with HOLDINGS tracking mode by default
+            if let Some(existing) = Self::find_relink_candidate(
+                &existing_accounts,
+                Some(&provider),
+                platform_id.as_deref(),
+                broker_account.account_number.as_deref(),
+                &currency,
+            ) {
+                self.relink_existing_account(
+                    existing,
+                    broker_account,
+                    &provider_account_id,
+                    &account_type,
+                )
+                .await?;
+                updated += 1;
+                info!(
+                    "Relinked account: {} ({}) -> {}",
+                    broker_account.display_name(),
+                    provider_account_id,
+                    existing.id
+                );
+                continue;
+            }
+
             let new_account = NewAccount {
                 id: None, // Let the repository generate a UUID
                 name: broker_account.display_name(),
-                account_type: broker_account.get_account_type(),
+                account_type: account_type.clone(),
                 group: None,
-                currency: broker_account.get_currency(base_currency.as_deref()),
+                currency,
                 is_default: false,
                 is_active: broker_account.status.as_deref() != Some("closed"),
                 platform_id,
                 account_number: broker_account.account_number.clone(),
                 meta: broker_account.to_meta_json(),
-                provider: Some("SNAPTRADE".to_string()),
+                provider: Some(provider),
                 provider_account_id: Some(provider_account_id.clone()),
                 is_archived: false,
-                tracking_mode: TrackingMode::Holdings,
+                tracking_mode: Self::inferred_tracking_mode_for_account_type(&account_type)
+                    .unwrap_or(TrackingMode::NotSet),
             };
 
             // Create the account via AccountService (handles FX rate registration)
@@ -259,7 +410,7 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
                 "Created account: {} ({}) -> {}",
                 broker_account.display_name(),
                 provider_account_id,
-                broker_account.get_account_type()
+                account_type
             );
         }
 
@@ -293,8 +444,9 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
     }
 
     async fn mark_activity_sync_attempt(&self, account_id: String) -> Result<()> {
+        let provider = self.provider_for_account(&account_id);
         self.brokers_sync_state_repository
-            .upsert_attempt(account_id, DEFAULT_BROKERAGE_PROVIDER.to_string())
+            .upsert_attempt(account_id, provider)
             .await
     }
 
@@ -512,13 +664,9 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
         last_synced_date: String,
         import_run_id: Option<String>,
     ) -> Result<()> {
+        let provider = self.provider_for_account(&account_id);
         self.brokers_sync_state_repository
-            .upsert_success(
-                account_id,
-                DEFAULT_BROKERAGE_PROVIDER.to_string(),
-                last_synced_date,
-                import_run_id,
-            )
+            .upsert_success(account_id, provider, last_synced_date, import_run_id)
             .await
     }
 
@@ -528,13 +676,9 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
         error: String,
         import_run_id: Option<String>,
     ) -> Result<()> {
+        let provider = self.provider_for_account(&account_id);
         self.brokers_sync_state_repository
-            .upsert_failure(
-                account_id,
-                DEFAULT_BROKERAGE_PROVIDER.to_string(),
-                error,
-                import_run_id,
-            )
+            .upsert_failure(account_id, provider, error, import_run_id)
             .await
     }
 
@@ -544,13 +688,9 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
         warning: String,
         import_run_id: Option<String>,
     ) -> Result<()> {
+        let provider = self.provider_for_account(&account_id);
         self.brokers_sync_state_repository
-            .upsert_needs_review(
-                account_id,
-                DEFAULT_BROKERAGE_PROVIDER.to_string(),
-                warning,
-                import_run_id,
-            )
+            .upsert_needs_review(account_id, provider, warning, import_run_id)
             .await
     }
 
@@ -574,9 +714,10 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
     }
 
     async fn create_import_run(&self, account_id: &str, mode: ImportRunMode) -> Result<ImportRun> {
+        let provider = self.provider_for_account(account_id);
         let import_run = ImportRun::new(
             account_id.to_string(),
-            DEFAULT_BROKERAGE_PROVIDER.to_string(),
+            provider,
             ImportRunType::Sync,
             mode,
             ReviewMode::Never,

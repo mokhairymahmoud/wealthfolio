@@ -4,6 +4,8 @@
 //! for syncing broker accounts and activities.
 
 #[cfg(feature = "broker")]
+pub mod aggregation;
+#[cfg(feature = "broker")]
 pub mod broker;
 pub mod broker_ingest;
 pub mod client;
@@ -34,3 +36,11 @@ pub use broker_ingest::{
     ReviewMode,
 };
 pub use platform::Platform;
+
+#[cfg(feature = "broker")]
+pub use aggregation::{AccountDto as AggregationAccount, ConnectionDto as AggregationConnection};
+#[cfg(feature = "broker")]
+pub use aggregation::{
+    AggregationApiClient, AggregationProviderNotifier, AggregationStatus, AggregationSyncResult,
+    AggregationSyncService, ConnectUrlResponse, ConnectorDto,
+};

@@ -6,6 +6,7 @@ import { OnboardingLayout } from "@/pages/layouts/onboarding-layout";
 import SettingsLayout from "@/pages/settings/settings-layout";
 
 import { getDynamicRoutes, subscribeToNavigationUpdates } from "@/addons/addons-runtime-context";
+import ProviderCallbackPage from "@/features/provider-sync/pages/provider-callback-page";
 import AuthCallbackPage from "@/features/wealthfolio-connect/pages/auth-callback-page";
 import ConnectPage from "@/features/wealthfolio-connect/pages/connect-page";
 import ActivityManagerPage from "@/pages/activity/activity-manager-page";
@@ -40,6 +41,9 @@ import GoalsDashboardPage from "@/features/goals/pages/goals-dashboard-page";
 import GoalNewPage from "@/features/goals/pages/goal-new-page";
 import GoalDetailPage from "@/features/goals/pages/goal-detail-page";
 import GoalRetirementGuidePage from "@/features/goals/pages/goal-retirement-guide-page";
+import ProviderSyncSettingsPage from "./pages/settings/provider-sync/provider-sync-settings-page";
+import FirePlannerPage from "./pages/fire-planner/fire-planner-page";
+import FirePlannerSettingsPage from "./pages/settings/fire-planner/fire-planner-settings-page";
 
 export function AppRoutes() {
   const [dynamicRoutes, setDynamicRoutes] = useState<
@@ -71,6 +75,7 @@ export function AppRoutes() {
 
         {/* Auth callback - No layout needed */}
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
+        <Route path="/provider/callback" element={<ProviderCallbackPage />} />
 
         {/* Onboarding with dedicated layout */}
         <Route path="/onboarding" element={<OnboardingLayout />}>
@@ -125,6 +130,7 @@ export function AppRoutes() {
             <Route path="securities" element={<AssetsPage />} />
             <Route path="taxonomies" element={<TaxonomiesPage />} />
             <Route path="connect" element={<ConnectSettingsPage />} />
+            <Route path="provider-sync" element={<ProviderSyncSettingsPage />} />
             <Route path="ai-providers" element={<AiProvidersPage />} />
             <Route path="addons" element={<AddonSettingsPage />} />
           </Route>

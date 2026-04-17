@@ -1,10 +1,16 @@
+import { getProviderSyncStatus } from "@/adapters";
 import { getPlatforms } from "@/features/wealthfolio-connect";
+import { ProviderSelectionDrawer } from "@/features/provider-sync/components/provider-selection-drawer";
 import { useAccounts } from "@/hooks/use-accounts";
 import { QueryKeys } from "@/lib/query-keys";
 import type { Account, Platform } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import {
   Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   EmptyPlaceholder,
   Icons,
   Separator,
@@ -35,10 +41,18 @@ const SettingsAccountsPage = () => {
     return new Map(platforms.map((p) => [p.id, p]));
   }, [platforms]);
 
+  const { data: providerStatus } = useQuery({
+    queryKey: [QueryKeys.PROVIDER_SYNC_STATUS],
+    queryFn: getProviderSyncStatus,
+  });
+
+  const [providerDrawerOpen, setProviderDrawerOpen] = useState(false);
   const [visibleModal, setVisibleModal] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<FilterType>("all");
+
+  const providerEnabled = providerStatus?.enabled === true;
 
   const handleAddAccount = () => {
     setSelectedAccount(null);
@@ -155,21 +169,31 @@ const SettingsAccountsPage = () => {
     <>
       <div className="space-y-6">
         <SettingsHeader heading="Accounts" text=" Manage your investment and saving accounts.">
-          {/* Mobile: icon button; Desktop: full button */}
-          <>
-            <Button
-              size="icon"
-              className="sm:hidden"
-              onClick={() => handleAddAccount()}
-              aria-label="Add account"
-            >
-              <Icons.Plus className="h-4 w-4" />
+          {providerEnabled ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm">
+                  <Icons.Plus className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Add account</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setProviderDrawerOpen(true)}>
+                  <Icons.Link className="mr-2 h-4 w-4" />
+                  Link account
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleAddAccount()}>
+                  <Icons.Pencil className="mr-2 h-4 w-4" />
+                  Enter manually
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Button size="sm" onClick={() => handleAddAccount()}>
+              <Icons.Plus className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Add account</span>
             </Button>
-            <Button size="sm" className="hidden sm:inline-flex" onClick={() => handleAddAccount()}>
-              <Icons.Plus className="mr-2 h-4 w-4" />
-              Add account
-            </Button>
-          </>
+          )}
         </SettingsHeader>
         <Separator />
 
@@ -238,10 +262,21 @@ const SettingsAccountsPage = () => {
               <EmptyPlaceholder.Description>
                 You don&apos;t have any account yet. Start adding your investment accounts.
               </EmptyPlaceholder.Description>
-              <Button onClick={() => handleAddAccount()}>
-                <Icons.Plus className="mr-2 h-4 w-4" />
-                Add an account
-              </Button>
+              <div className="flex gap-2">
+                {providerEnabled && (
+                  <Button variant="default" onClick={() => setProviderDrawerOpen(true)}>
+                    <Icons.Link className="mr-2 h-4 w-4" />
+                    Link account
+                  </Button>
+                )}
+                <Button
+                  variant={providerEnabled ? "outline" : "default"}
+                  onClick={() => handleAddAccount()}
+                >
+                  <Icons.Pencil className="mr-2 h-4 w-4" />
+                  Enter manually
+                </Button>
+              </div>
             </EmptyPlaceholder>
           ) : filteredAccounts.length === 0 ? (
             <div className="text-muted-foreground py-8 text-center">
@@ -291,6 +326,11 @@ const SettingsAccountsPage = () => {
         account={selectedAccount || undefined}
         open={visibleModal}
         onClose={() => setVisibleModal(false)}
+      />
+      <ProviderSelectionDrawer
+        isOpen={providerDrawerOpen}
+        onOpenChange={setProviderDrawerOpen}
+        onManualAdd={handleAddAccount}
       />
     </>
   );
