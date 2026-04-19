@@ -1,5 +1,7 @@
 packages:
   - "apps/frontend"
+  - "apps/mcp-server"
+  - "apps/provider-sync-service"
   - "packages/*"
   - "addons/*"
 
