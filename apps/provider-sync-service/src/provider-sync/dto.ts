@@ -28,6 +28,7 @@ export interface AccountDto {
   currency: string | null;
   institutionName: string | null;
   mask: string | null;
+  balance: string | null;
 }
 
 export interface SecurityDto {

@@ -69,6 +69,7 @@ pub struct AccountDto {
     pub currency: Option<String>,
     pub institution_name: Option<String>,
     pub mask: Option<String>,
+    pub balance: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -678,7 +679,47 @@ impl AggregationSyncService {
                 continue;
             }
 
+            // Cash accounts: use provider-reported balance directly
             if local_account.account_type.eq_ignore_ascii_case("CASH") {
+                if let Some(balance_str) = account.balance.as_deref() {
+                    if let Ok(cash) = balance_str.parse::<f64>() {
+                        let currency_code = account
+                            .currency
+                            .clone()
+                            .unwrap_or_else(|| "USD".to_string());
+                        let balance = crate::broker::HoldingsBalance {
+                            currency: Some(crate::broker::HoldingsCurrency {
+                                id: None,
+                                code: Some(currency_code),
+                                name: None,
+                            }),
+                            cash: Some(cash),
+                            buying_power: None,
+                        };
+                        match self
+                            .sync_service
+                            .save_broker_holdings(
+                                local_account.id.clone(),
+                                vec![balance],
+                                Vec::new(),
+                                Vec::new(),
+                            )
+                            .await
+                        {
+                            Ok((_diff, created, _ids)) => {
+                                holdings_synced += 1;
+                                assets_created += created;
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to save cash balance for account {}: {}",
+                                    local_account.id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
                 continue;
             }
 

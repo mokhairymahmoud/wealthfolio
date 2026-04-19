@@ -487,6 +487,7 @@ export class PowensProvider implements AggregationProvider {
       currency,
       institutionName,
       mask: account.number ?? account.iban ?? null,
+      balance: account.balance != null ? String(account.balance) : null,
     };
   }
 
@@ -510,7 +511,10 @@ export class PowensProvider implements AggregationProvider {
       id: String(order.id ?? ""),
       accountId,
       security,
-      bookedAt: order.datetime ?? order.date ?? new Date().toISOString(),
+      bookedAt:
+        this.normalizeDate(order.datetime) ??
+        this.normalizeDate(order.date) ??
+        new Date().toISOString(),
       settledAt: null,
       transactionType: this.mapOrderType(order.operation ?? order.order_type ?? ""),
       quantity: this.toStringOrNull(order.quantity),
@@ -533,23 +537,28 @@ export class PowensProvider implements AggregationProvider {
     const grossAmount = this.absString(transaction.gross_value) ?? amount;
     const currency = this.currencyCode(transaction.original_currency) ?? accountCurrency;
 
+    // Powens bank transaction `value` already includes any commission,
+    // so we must not pass commission as a separate fee — the portfolio
+    // calculator would subtract it again, double-counting it.
+    const bookedAt =
+      this.normalizeDate(transaction.datetime) ??
+      this.normalizeDate(transaction.application_date) ??
+      this.normalizeDate(transaction.date) ??
+      this.normalizeDate(transaction.rdate) ??
+      new Date().toISOString();
     return {
       id: String(transaction.id ?? ""),
       accountId,
       security: null,
-      bookedAt:
-        transaction.datetime ??
-        transaction.application_date ??
-        transaction.date ??
-        transaction.rdate ??
-        new Date().toISOString(),
-      settledAt: transaction.vdatetime ?? transaction.vdate ?? null,
+      bookedAt,
+      settledAt:
+        this.normalizeDate(transaction.vdatetime) ?? this.normalizeDate(transaction.vdate) ?? null,
       transactionType: this.mapBankTransactionType(transaction.type ?? "", transaction.value),
       quantity: null,
       unitPrice: null,
       grossAmount,
       netAmount: amount,
-      fee: this.absString(transaction.commission),
+      fee: null,
       currency,
       description:
         transaction.wording ??
@@ -594,7 +603,14 @@ export class PowensProvider implements AggregationProvider {
       const name = type.name?.toLowerCase() ?? "";
       if (name.includes("retirement")) return "retirement";
       if (name.includes("crypto")) return "crypto";
-      if (name.includes("card") || name.includes("cash")) return "cash";
+      if (
+        name.includes("card") ||
+        name.includes("cash") ||
+        name.includes("checking") ||
+        name.includes("savings") ||
+        name.includes("deposit")
+      )
+        return "cash";
       return "other";
     }
 
@@ -643,7 +659,7 @@ export class PowensProvider implements AggregationProvider {
   ): TransactionDto["transactionType"] {
     const normalizedType = type.trim().toLowerCase();
     if (normalizedType === "profit") return "interest";
-    if (["bank", "fee", "market_fee"].includes(normalizedType)) return "fee";
+    if (["fee", "market_fee"].includes(normalizedType)) return "fee";
 
     const amount = this.toNumber(value);
     if (amount !== null) {
@@ -653,14 +669,9 @@ export class PowensProvider implements AggregationProvider {
 
     if (["deposit", "payback", "payout"].includes(normalizedType)) return "cash_deposit";
     if (
-      [
-        "withdrawal",
-        "loan_repayment",
-        "card",
-        "deferred_card",
-        "summary_card",
-        "payment",
-      ].includes(normalizedType)
+      ["withdrawal", "loan_repayment", "card", "deferred_card", "summary_card", "payment"].includes(
+        normalizedType,
+      )
     ) {
       return "cash_withdrawal";
     }
@@ -764,6 +775,15 @@ export class PowensProvider implements AggregationProvider {
 
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  // Powens returns datetimes as "YYYY-MM-DD HH:MM:SS" (space-separated, no timezone).
+  // Normalize to ISO 8601 / RFC 3339 so the Rust validator accepts them.
+  private normalizeDate(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (trimmed.includes("T") || trimmed.length === 10) return trimmed;
+    return trimmed.replace(" ", "T") + "Z";
   }
 
   private currencyCode(value: string | PowensCurrency | null | undefined): string | null {
