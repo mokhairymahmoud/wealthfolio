@@ -70,3 +70,16 @@ pub async fn delete_asset(id: String, state: State<'_, Arc<ServiceContext>>) -> 
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn update_expense_ratio(
+    id: String,
+    expense_ratio: Option<f64>,
+    state: State<'_, Arc<ServiceContext>>,
+) -> Result<(), String> {
+    state
+        .asset_service()
+        .update_expense_ratio(&id, expense_ratio)
+        .await
+        .map_err(|e| e.to_string())
+}

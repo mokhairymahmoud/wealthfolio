@@ -695,6 +695,12 @@ impl AssetServiceTrait for AssetService {
         self.asset_repository.list_by_asset_ids(asset_ids)
     }
 
+    async fn update_expense_ratio(&self, asset_id: &str, expense_ratio: Option<f64>) -> Result<()> {
+        self.asset_repository
+            .update_expense_ratio(asset_id, expense_ratio)
+            .await
+    }
+
     /// Enriches an existing asset's profile with data from market data provider.
     /// Updates the profile JSON (sectors, countries, website) and notes fields.
     async fn enrich_asset_profile(&self, asset_id: &str) -> Result<Asset> {
@@ -889,6 +895,16 @@ impl AssetServiceTrait for AssetService {
             .asset_repository
             .update_profile(asset_id, update)
             .await?;
+
+        if let Some(er) = provider_profile.expense_ratio {
+            if let Err(e) = self
+                .asset_repository
+                .update_expense_ratio(asset_id, Some(er))
+                .await
+            {
+                warn!("Failed to save expense ratio for {}: {}", asset_id, e);
+            }
+        }
 
         // Auto-classify asset based on provider profile data
         if let Some(taxonomy_service) = &self.taxonomy_service {

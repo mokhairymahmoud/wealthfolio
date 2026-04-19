@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -11,6 +12,7 @@ use wealthfolio_core::{
     constants::PORTFOLIO_TOTAL_ACCOUNT_ID,
     portfolio::{
         allocation::{AllocationHoldings, PortfolioAllocations},
+        fees::FeeAnalysis,
         holdings::Holding,
         snapshot::{
             CashBalanceInput, ManualHoldingInput, ManualSnapshotRequest, ManualSnapshotService,
@@ -153,6 +155,41 @@ pub async fn get_holdings_by_allocation(
         .get_holdings_by_allocation(&q.account_id, &base, &q.taxonomy_id, &q.category_id)
         .await?;
     Ok(Json(result))
+}
+
+pub async fn get_fee_analysis(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<HoldingsQuery>,
+) -> ApiResult<Json<FeeAnalysis>> {
+    let base = state.base_currency.read().unwrap().clone();
+    let holdings = state
+        .holdings_service
+        .get_holdings(&q.account_id, &base)
+        .await?;
+
+    let asset_ids: Vec<String> = holdings.iter().map(|h| h.id.clone()).collect();
+    let assets = state
+        .asset_service
+        .get_assets_by_asset_ids(&asset_ids)
+        .await?;
+
+    let expense_ratios: HashMap<String, f64> = assets
+        .iter()
+        .filter_map(|a| a.expense_ratio.map(|er| (a.id.clone(), er)))
+        .collect();
+
+    let accounts = state.account_service.get_active_accounts()?;
+    let account_names: HashMap<String, String> = accounts
+        .into_iter()
+        .map(|a| (a.id.clone(), a.name.clone()))
+        .collect();
+
+    Ok(Json(wealthfolio_core::fees::analyze_fees(
+        &holdings,
+        &expense_ratios,
+        &base,
+        &account_names,
+    )))
 }
 
 /// Gets snapshots for an account (all sources: CALCULATED, MANUAL_ENTRY, etc.)

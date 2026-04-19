@@ -54,6 +54,13 @@ const staticNavigation: NavigationProps = {
       label: "Goals",
     },
     {
+      icon: <Icons.Receipt className="size-6" />,
+      title: "Taxes",
+      href: "/taxes",
+      keywords: ["tax", "impot", "france", "declaration", "ifu"],
+      label: "View Taxes",
+    },
+    {
       icon: <Icons.Sparkles className="size-6" />,
       title: "Assistant",
       href: "/assistant",

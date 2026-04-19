@@ -11,6 +11,7 @@ import type {
   ImportHoldingsCsvResult,
   CheckHoldingsImportResult,
   SnapshotInfo,
+  FeeAnalysis,
 } from "@/lib/types";
 
 import { invoke, logger } from "./platform";
@@ -271,4 +272,15 @@ export const getSnapshotByDate = async (accountId: string, date: string): Promis
  */
 export const deleteSnapshot = async (accountId: string, date: string): Promise<void> => {
   return invoke<void>("delete_snapshot", { accountId, date });
+};
+
+export const getFeeAnalysis = async (accountId: string): Promise<FeeAnalysis> => {
+  return invoke<FeeAnalysis>("get_fee_analysis", { accountId });
+};
+
+export const updateExpenseRatio = async (
+  assetId: string,
+  expenseRatio: number | null,
+): Promise<void> => {
+  return invoke<void>("update_expense_ratio", { assetId, expenseRatio });
 };

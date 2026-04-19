@@ -140,6 +140,14 @@ export const QueryKeys = {
   HEALTH_CONFIG: "healthConfig",
   DISMISSED_HEALTH_ISSUES: "dismissedHealthIssues",
 
+  // Fee Analysis
+  FEE_ANALYSIS: "feeAnalysis",
+
+  // Taxes
+  TAX_PROFILE: "taxProfile",
+  ACCOUNT_TAX_PROFILES: "accountTaxProfiles",
+  TAX_YEAR_REPORTS: "taxYearReports",
+
   // Snapshot Management
   SNAPSHOTS: "snapshots",
   snapshots: (accountId: string) => [QueryKeys.SNAPSHOTS, accountId],

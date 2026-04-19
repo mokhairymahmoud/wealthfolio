@@ -165,6 +165,14 @@ mod tests {
             unimplemented!()
         }
 
+        async fn update_expense_ratio(
+            &self,
+            _asset_id: &str,
+            _expense_ratio: Option<f64>,
+        ) -> Result<()> {
+            Ok(())
+        }
+
         async fn create_asset(&self, _new_asset: crate::assets::NewAsset) -> Result<Asset> {
             unimplemented!()
         }

@@ -236,6 +236,9 @@ pub struct Asset {
     // Provider configuration (single JSON blob)
     pub provider_config: Option<Value>,
 
+    // Fund fee data
+    pub expense_ratio: Option<f64>,
+
     // Derived (not stored in DB)
     #[serde(skip_deserializing)]
     pub exchange_name: Option<String>, // Friendly exchange name (derived from MIC)
@@ -508,6 +511,7 @@ pub struct ProviderProfile {
     pub dividend_yield: Option<f64>,
     pub week_52_high: Option<f64>,
     pub week_52_low: Option<f64>,
+    pub expense_ratio: Option<f64>,
 }
 
 /// Input model for creating a new asset.

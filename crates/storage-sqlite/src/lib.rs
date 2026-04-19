@@ -43,6 +43,7 @@ pub mod market_data;
 pub mod portfolio;
 pub mod settings;
 pub mod sync;
+pub mod tax;
 pub mod taxonomies;
 
 // Re-export database utilities

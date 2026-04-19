@@ -8,6 +8,7 @@ import { Icons } from "@wealthfolio/ui";
 import { Card, CardContent, CardHeader } from "@wealthfolio/ui/components/ui/card";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { Suspense, useMemo, useState } from "react";
+import FeeScannerPage from "../fees/fee-scanner-page";
 import HoldingsInsightsPage from "../holdings/holdings-insights-page";
 
 // Loading skeleton to show while the dashboard is loading
@@ -93,6 +94,16 @@ export default function PortfolioInsightsPage() {
         content: (
           <Suspense fallback={<DashboardLoader />}>
             <IncomePage />
+          </Suspense>
+        ),
+      },
+      {
+        value: "fees",
+        label: "Fees",
+        icon: Icons.Receipt,
+        content: (
+          <Suspense fallback={<DashboardLoader />}>
+            <FeeScannerPage />
           </Suspense>
         ),
       },

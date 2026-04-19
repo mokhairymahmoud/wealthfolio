@@ -422,6 +422,10 @@ impl EtfProfileResponse {
             week_52_high: None,
             week_52_low: None,
             isin: None,
+            expense_ratio: self
+                .net_expense_ratio
+                .as_ref()
+                .and_then(|s| Self::parse_weight(s)),
         }
     }
 }
@@ -475,6 +479,7 @@ impl CompanyOverviewResponse {
             week_52_high: Self::parse_f64(&self.week_52_high),
             week_52_low: Self::parse_f64(&self.week_52_low),
             isin: None,
+            expense_ratio: None,
         }
     }
 }

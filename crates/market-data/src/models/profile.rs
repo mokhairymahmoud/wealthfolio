@@ -72,6 +72,10 @@ pub struct AssetProfile {
     /// ISIN (International Securities Identification Number)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub isin: Option<String>,
+
+    /// Net expense ratio for ETFs/funds (as decimal, e.g., 0.003 for 0.3%)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expense_ratio: Option<f64>,
 }
 
 impl AssetProfile {

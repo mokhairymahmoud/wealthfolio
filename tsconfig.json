@@ -2,6 +2,7 @@
   "extends": "./tsconfig.base.json",
   "references": [
     { "path": "./apps/frontend" },
+    { "path": "./apps/mcp-server" },
     { "path": "./packages/ui" },
     { "path": "./packages/addon-sdk" }
   ],

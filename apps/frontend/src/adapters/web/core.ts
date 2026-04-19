@@ -42,6 +42,7 @@ export const COMMANDS: CommandMap = {
   get_holdings: { method: "GET", path: "/holdings" },
   get_holding: { method: "GET", path: "/holdings/item" },
   get_asset_holdings: { method: "GET", path: "/holdings/by-asset" },
+  get_fee_analysis: { method: "GET", path: "/fees/analysis" },
   get_historical_valuations: { method: "GET", path: "/valuations/history" },
   get_latest_valuations: { method: "GET", path: "/valuations/latest" },
   get_portfolio_allocations: { method: "GET", path: "/allocations" },
@@ -88,6 +89,16 @@ export const COMMANDS: CommandMap = {
     path: "/goals/retirement/decision-sensitivity-map",
   },
   run_retirement_sorr: { method: "POST", path: "/goals/retirement/sequence-of-returns" },
+  update_goal_allocations: { method: "POST", path: "/goals/allocations" },
+  load_goals_allocations: { method: "GET", path: "/goals/allocations" },
+  // Taxes
+  get_tax_profile: { method: "GET", path: "/taxes/profile" },
+  update_tax_profile: { method: "PUT", path: "/taxes/profile" },
+  get_account_tax_profiles: { method: "GET", path: "/taxes/accounts" },
+  update_account_tax_profile: { method: "PUT", path: "/taxes/accounts" },
+  list_tax_year_reports: { method: "GET", path: "/taxes/reports" },
+  create_tax_year_report: { method: "POST", path: "/taxes/reports" },
+  get_tax_year_report: { method: "GET", path: "/taxes/reports" },
   // FX
   get_latest_exchange_rates: { method: "GET", path: "/exchange-rates/latest" },
   update_exchange_rate: { method: "PUT", path: "/exchange-rates" },
@@ -136,6 +147,7 @@ export const COMMANDS: CommandMap = {
   get_asset_profile: { method: "GET", path: "/assets/profile" },
   update_asset_profile: { method: "PUT", path: "/assets/profile" },
   update_quote_mode: { method: "PUT", path: "/assets/pricing-mode" },
+  update_expense_ratio: { method: "PUT", path: "/assets/expense-ratio" },
   // Market data
   search_symbol: { method: "GET", path: "/market-data/search" },
   resolve_symbol_quote: { method: "GET", path: "/market-data/resolve-currency" },
@@ -788,6 +800,37 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "calculate_deposits_for_contribution_limit": {
       const { limitId } = payload as { limitId: string };
       url += `/${encodeURIComponent(limitId)}/deposits`;
+      break;
+    }
+    case "get_fee_analysis": {
+      const { accountId: feeAccountId } = payload as { accountId: string };
+      url += `?accountId=${encodeURIComponent(feeAccountId)}`;
+      break;
+    }
+    case "update_expense_ratio": {
+      const { assetId, expenseRatio } = payload as { assetId: string; expenseRatio: number | null };
+      url += `/${encodeURIComponent(assetId)}`;
+      body = JSON.stringify({ expenseRatio });
+      break;
+    }
+    case "update_tax_profile": {
+      const { profile } = payload as { profile: Record<string, unknown> };
+      body = JSON.stringify(profile);
+      break;
+    }
+    case "update_account_tax_profile": {
+      const { profile } = payload as { profile: Record<string, unknown> };
+      body = JSON.stringify(profile);
+      break;
+    }
+    case "create_tax_year_report": {
+      const { report } = payload as { report: Record<string, unknown> };
+      body = JSON.stringify(report);
+      break;
+    }
+    case "get_tax_year_report": {
+      const { id } = payload as { id: string };
+      url += `/${encodeURIComponent(id)}`;
       break;
     }
     case "get_asset_profile": {

@@ -115,6 +115,17 @@ export {
   updateGoal,
 } from "../shared/goals";
 
+// Tax Commands
+export {
+  createTaxYearReport,
+  getAccountTaxProfiles,
+  getTaxProfile,
+  getTaxYearReport,
+  listTaxYearReports,
+  updateAccountTaxProfile,
+  updateTaxProfile,
+} from "../shared/taxes";
+
 // Secrets Commands
 export { deleteSecret, getSecret, setSecret } from "../shared/secrets";
 
@@ -159,6 +170,8 @@ export {
   recalculatePortfolio,
   saveManualHoldings,
   updatePortfolio,
+  getFeeAnalysis,
+  updateExpenseRatio,
 } from "../shared/portfolio";
 
 // Market Data Commands

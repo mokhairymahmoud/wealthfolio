@@ -67,6 +67,7 @@ pub struct AssetDB {
     pub provider_config: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub expense_ratio: Option<f64>,
 }
 
 /// Database write model for assets (excludes generated columns).
@@ -89,6 +90,7 @@ pub struct InsertableAssetDB {
     pub provider_config: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub expense_ratio: Option<f64>,
 }
 
 // Conversion: DB read model → domain model
@@ -129,6 +131,7 @@ impl From<AssetDB> for Asset {
             instrument_exchange_mic: db.instrument_exchange_mic,
             instrument_key: db.instrument_key,
             provider_config,
+            expense_ratio: db.expense_ratio,
             exchange_name: None, // Computed by Asset::enrich()
             created_at: text_to_datetime(&db.created_at),
             updated_at: text_to_datetime(&db.updated_at),
@@ -175,6 +178,7 @@ impl From<NewAsset> for InsertableAssetDB {
             provider_config,
             created_at: now.clone(),
             updated_at: now,
+            expense_ratio: None,
         }
     }
 }

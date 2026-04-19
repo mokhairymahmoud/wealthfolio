@@ -39,6 +39,8 @@ pub trait AssetServiceTrait: Send + Sync {
         self.update_quote_mode(asset_id, quote_mode).await
     }
     async fn get_assets_by_asset_ids(&self, asset_ids: &[String]) -> Result<Vec<Asset>>;
+    /// Updates the expense ratio for an asset (manual entry or override).
+    async fn update_expense_ratio(&self, asset_id: &str, expense_ratio: Option<f64>) -> Result<()>;
     /// Enriches an existing asset's profile with data from market data provider.
     /// Updates the profile JSON (sectors, countries, website) and notes fields.
     async fn enrich_asset_profile(&self, asset_id: &str) -> Result<Asset>;
@@ -199,6 +201,9 @@ pub trait AssetRepositoryTrait: Send + Sync {
     /// Finds INVESTMENT assets with no remaining activities and deactivates them.
     /// Returns the IDs of deactivated assets.
     async fn deactivate_orphaned_investments(&self) -> Result<Vec<String>>;
+
+    /// Updates the expense ratio for an asset.
+    async fn update_expense_ratio(&self, asset_id: &str, expense_ratio: Option<f64>) -> Result<()>;
 }
 
 #[cfg(test)]
@@ -252,6 +257,14 @@ mod tests {
 
         async fn get_assets_by_asset_ids(&self, _asset_ids: &[String]) -> Result<Vec<Asset>> {
             unimplemented!()
+        }
+
+        async fn update_expense_ratio(
+            &self,
+            _asset_id: &str,
+            _expense_ratio: Option<f64>,
+        ) -> Result<()> {
+            Ok(())
         }
 
         async fn enrich_asset_profile(&self, _asset_id: &str) -> Result<Asset> {

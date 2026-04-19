@@ -16,6 +16,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/holdings", get(handlers::get_holdings))
         .route("/holdings/item", get(handlers::get_holding))
         .route("/holdings/by-asset", get(handlers::get_asset_holdings))
+        .route("/fees/analysis", get(handlers::get_fee_analysis))
         .route(
             "/valuations/history",
             get(handlers::get_historical_valuations),

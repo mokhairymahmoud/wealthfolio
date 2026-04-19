@@ -16,6 +16,7 @@ use tauri::{AppHandle, State};
 use wealthfolio_core::{
     accounts::TrackingMode,
     allocation::{AllocationHoldings, PortfolioAllocations},
+    fees::FeeAnalysis,
     holdings::Holding,
     income::IncomeSummary,
     performance::{PerformanceMetrics, SimplePerformanceMetrics},
@@ -127,6 +128,47 @@ pub async fn get_asset_holdings(
         }
     }
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn get_fee_analysis(
+    state: State<'_, Arc<ServiceContext>>,
+    account_id: String,
+) -> Result<FeeAnalysis, String> {
+    let base_currency = state.get_base_currency();
+    let holdings = state
+        .holdings_service()
+        .get_holdings(&account_id, &base_currency)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let asset_ids: Vec<String> = holdings.iter().map(|h| h.id.clone()).collect();
+    let assets = state
+        .asset_service()
+        .get_assets_by_asset_ids(&asset_ids)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let expense_ratios: HashMap<String, f64> = assets
+        .iter()
+        .filter_map(|a| a.expense_ratio.map(|er| (a.id.clone(), er)))
+        .collect();
+
+    let accounts = state
+        .account_service()
+        .get_active_accounts()
+        .map_err(|e| e.to_string())?;
+    let account_names: HashMap<String, String> = accounts
+        .into_iter()
+        .map(|a| (a.id.clone(), a.name.clone()))
+        .collect();
+
+    Ok(wealthfolio_core::fees::analyze_fees(
+        &holdings,
+        &expense_ratios,
+        &base_currency,
+        &account_names,
+    ))
 }
 
 #[tauri::command]

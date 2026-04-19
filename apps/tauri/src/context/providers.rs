@@ -30,6 +30,7 @@ use wealthfolio_core::{
     },
     quotes::{QuoteService, QuoteServiceTrait},
     settings::{SettingsRepositoryTrait, SettingsService, SettingsServiceTrait},
+    tax::TaxService,
     taxonomies::TaxonomyService,
 };
 use wealthfolio_device_sync::{engine::DeviceSyncRuntimeState, DeviceEnrollService};
@@ -47,6 +48,7 @@ use wealthfolio_storage_sqlite::{
     portfolio::{snapshot::SnapshotRepository, valuation::ValuationRepository},
     settings::SettingsRepository,
     sync::{AppSyncRepository, BrokerSyncStateRepository, ImportRunRepository, PlatformRepository},
+    tax::TaxRepository,
     taxonomies::TaxonomyRepository,
 };
 
@@ -82,6 +84,7 @@ pub async fn initialize_context(
     let activity_repository = Arc::new(ActivityRepository::new(pool.clone(), writer.clone()));
     let asset_repository = Arc::new(AssetRepository::new(pool.clone(), writer.clone()));
     let goal_repo = Arc::new(GoalRepository::new(pool.clone(), writer.clone()));
+    let tax_repository = Arc::new(TaxRepository::new(pool.clone(), writer.clone()));
     let market_data_repo = Arc::new(MarketDataRepository::new(pool.clone(), writer.clone()));
     let limit_repository = Arc::new(ContributionLimitRepository::new(
         pool.clone(),
@@ -200,6 +203,7 @@ pub async fn initialize_context(
         .with_event_sink(domain_event_sink.clone()),
     );
     let goal_service = Arc::new(GoalService::new(goal_repo.clone(), account_service.clone()));
+    let tax_service = Arc::new(TaxService::new(tax_repository.clone()));
     let limits_service = Arc::new(ContributionLimitService::new_with_timezone(
         fx_service.clone(),
         limit_repository.clone(),
@@ -372,6 +376,7 @@ pub async fn initialize_context(
             activity_service,
             asset_service,
             goal_service,
+            tax_service,
             quote_service,
             limits_service,
             fx_service,

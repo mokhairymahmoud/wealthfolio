@@ -264,6 +264,13 @@ mod tests {
         async fn deactivate_orphaned_investments(&self) -> AppResult<Vec<String>> {
             Ok(vec![])
         }
+        async fn update_expense_ratio(
+            &self,
+            _asset_id: &str,
+            _expense_ratio: Option<f64>,
+        ) -> AppResult<()> {
+            Ok(())
+        }
     }
 
     #[derive(Clone, Debug)]

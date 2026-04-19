@@ -63,6 +63,66 @@ export interface Account {
   providerAccountId?: string; // Optional - account ID in the provider's system
 }
 
+export type TaxReportStatus = "DRAFT" | "FINALIZED" | "AMENDED_DRAFT";
+
+export interface TaxProfile {
+  jurisdiction: string;
+  taxResidenceCountry: string;
+  defaultTaxRegime: string;
+  pfuOrBaremePreference?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaxProfileUpdate {
+  jurisdiction: string;
+  taxResidenceCountry: string;
+  defaultTaxRegime: string;
+  pfuOrBaremePreference?: string | null;
+}
+
+export interface AccountTaxProfile {
+  accountId: string;
+  jurisdiction: string;
+  regime: string;
+  openedOn?: string | null;
+  closedOn?: string | null;
+  metadata?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountTaxProfileUpdate {
+  accountId: string;
+  jurisdiction: string;
+  regime: string;
+  openedOn?: string | null;
+  closedOn?: string | null;
+  metadata?: string | null;
+}
+
+export interface TaxYearReport {
+  id: string;
+  taxYear: number;
+  jurisdiction: string;
+  status: TaxReportStatus;
+  rulePackVersion: string;
+  baseCurrency: string;
+  generatedAt?: string | null;
+  finalizedAt?: string | null;
+  assumptionsJson: string;
+  summaryJson: string;
+  parentReportId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewTaxYearReport {
+  taxYear: number;
+  jurisdiction?: string | null;
+  baseCurrency?: string | null;
+}
+
 /**
  * Activity interface matching the new backend model
  * @deprecated Use the new Activity interface with activityType field
@@ -814,6 +874,37 @@ export interface IncomeSummary {
   currency: string;
   monthlyAverage: number;
   yoyGrowth: number | null; // Changed from optional to nullable
+}
+
+export type FeeSeverity = "NONE" | "WARNING" | "HIGH";
+
+export interface HoldingFee {
+  assetId: string;
+  symbol: string;
+  name: string;
+  accountId: string | null;
+  accountName: string | null;
+  marketValue: number;
+  marketValueBase: number;
+  currency: string;
+  expenseRatio: number | null;
+  annualFee: number | null;
+  severity: FeeSeverity;
+}
+
+export interface FeeProjection {
+  years: number;
+  cumulativeFeeDrag: number;
+}
+
+export interface FeeAnalysis {
+  holdings: HoldingFee[];
+  totalAnnualFee: number;
+  weightedAvgExpenseRatio: number | null;
+  feePctOfPortfolio: number | null;
+  totalMarketValue: number;
+  projections: FeeProjection[];
+  currency: string;
 }
 
 // Define custom DateRange type matching react-day-picker's

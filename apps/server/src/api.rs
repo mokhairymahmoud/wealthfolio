@@ -47,6 +47,7 @@ mod settings;
 pub mod shared;
 #[cfg(feature = "device-sync")]
 mod sync_crypto;
+mod taxes;
 mod taxonomies;
 
 #[utoipa::path(get, path = "/api/v1/healthz", responses((status = 200, description = "Health")))]
@@ -101,6 +102,7 @@ pub fn app_router(state: Arc<AppState>, config: &Config) -> Router {
         .merge(secrets::router())
         .merge(limits::router())
         .merge(addons::router())
+        .merge(taxes::router())
         .merge(taxonomies::router())
         .merge(net_worth::router())
         .merge(alternative_assets::router())

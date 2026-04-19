@@ -1,6 +1,19 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    account_tax_profiles (account_id) {
+        account_id -> Text,
+        jurisdiction -> Text,
+        regime -> Text,
+        opened_on -> Nullable<Text>,
+        closed_on -> Nullable<Text>,
+        metadata -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     accounts (id) {
         id -> Text,
         name -> Text,
@@ -147,6 +160,7 @@ diesel::table! {
         provider_config -> Nullable<Text>,
         created_at -> Text,
         updated_at -> Text,
+        expense_ratio -> Nullable<Double>,
     }
 }
 
@@ -453,6 +467,36 @@ diesel::table! {
 }
 
 diesel::table! {
+    tax_profiles (id) {
+        id -> Text,
+        jurisdiction -> Text,
+        tax_residence_country -> Text,
+        default_tax_regime -> Text,
+        pfu_or_bareme_preference -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    tax_year_reports (id) {
+        id -> Text,
+        tax_year -> Integer,
+        jurisdiction -> Text,
+        status -> Text,
+        rule_pack_version -> Text,
+        base_currency -> Text,
+        generated_at -> Nullable<Timestamp>,
+        finalized_at -> Nullable<Timestamp>,
+        assumptions_json -> Text,
+        summary_json -> Text,
+        parent_report_id -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     taxonomies (id) {
         id -> Text,
         name -> Text,
@@ -481,6 +525,7 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(account_tax_profiles -> accounts (account_id));
 diesel::joinable!(accounts -> platforms (platform_id));
 diesel::joinable!(activities -> accounts (account_id));
 diesel::joinable!(activities -> assets (asset_id));
@@ -501,6 +546,7 @@ diesel::joinable!(import_account_templates -> import_templates (template_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     import_account_templates,
+    account_tax_profiles,
     accounts,
     activities,
     ai_messages,
@@ -531,6 +577,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     sync_entity_metadata,
     sync_outbox,
     sync_table_state,
+    tax_profiles,
+    tax_year_reports,
     taxonomies,
     taxonomy_categories,
 );

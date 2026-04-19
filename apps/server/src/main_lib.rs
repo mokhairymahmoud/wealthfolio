@@ -40,6 +40,7 @@ use wealthfolio_core::{
     quotes::{QuoteService, QuoteServiceTrait},
     secrets::SecretStore,
     settings::{SettingsRepositoryTrait, SettingsService, SettingsServiceTrait},
+    tax::{TaxService, TaxServiceTrait},
     taxonomies::{TaxonomyService, TaxonomyServiceTrait},
 };
 use wealthfolio_device_sync::{engine::DeviceSyncRuntimeState, DeviceEnrollService};
@@ -57,6 +58,7 @@ use wealthfolio_storage_sqlite::{
     portfolio::{snapshot::SnapshotRepository, valuation::ValuationRepository},
     settings::SettingsRepository,
     sync::{AppSyncRepository, BrokerSyncStateRepository, ImportRunRepository, PlatformRepository},
+    tax::TaxRepository,
     taxonomies::TaxonomyRepository,
 };
 
@@ -80,6 +82,7 @@ pub struct AppState {
         Arc<dyn wealthfolio_core::portfolio::performance::PerformanceServiceTrait + Send + Sync>,
     pub income_service: Arc<dyn IncomeServiceTrait + Send + Sync>,
     pub goal_service: Arc<dyn GoalServiceTrait + Send + Sync>,
+    pub tax_service: Arc<dyn TaxServiceTrait + Send + Sync>,
     pub limits_service: Arc<dyn ContributionLimitServiceTrait + Send + Sync>,
     pub fx_service: Arc<dyn FxServiceTrait + Send + Sync>,
     pub activity_service: Arc<dyn ActivityServiceTrait + Send + Sync>,
@@ -337,6 +340,9 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
 
     let goal_repository = Arc::new(GoalRepository::new(pool.clone(), writer.clone()));
     let goal_service = Arc::new(GoalService::new(goal_repository, account_service.clone()));
+    let tax_repository = Arc::new(TaxRepository::new(pool.clone(), writer.clone()));
+    let tax_service: Arc<dyn TaxServiceTrait + Send + Sync> =
+        Arc::new(TaxService::new(tax_repository));
 
     let limits_repository = Arc::new(ContributionLimitRepository::new(
         pool.clone(),
@@ -515,6 +521,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         performance_service,
         income_service,
         goal_service,
+        tax_service,
         limits_service,
         fx_service: fx_service.clone(),
         activity_service,

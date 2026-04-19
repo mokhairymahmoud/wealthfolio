@@ -162,6 +162,13 @@ impl AssetRepositoryTrait for MockAssetRepository {
     async fn deactivate_orphaned_investments(&self) -> Result<Vec<String>> {
         Ok(vec![])
     }
+    async fn update_expense_ratio(
+        &self,
+        _asset_id: &str,
+        _expense_ratio: Option<f64>,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 struct MockSnapshotRepository {
@@ -846,6 +853,7 @@ fn create_test_asset(id: &str, kind: AssetKind, currency: &str) -> Asset {
         exchange_name: None,
         quote_mode: QuoteMode::Market,
         provider_config: None,
+        expense_ratio: None,
         is_active: true,
         metadata: None,
     }

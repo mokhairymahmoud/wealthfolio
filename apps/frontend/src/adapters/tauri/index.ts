@@ -85,6 +85,9 @@ export * from "../shared/custom-provider";
 // Goal Commands
 export * from "../shared/goals";
 
+// Tax Commands
+export * from "../shared/taxes";
+
 // Taxonomy Commands
 export * from "../shared/taxonomies";
 

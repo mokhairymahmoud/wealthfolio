@@ -11,6 +11,7 @@ import type { TaxonomyAllocation } from "@/lib/types";
 import { useNavigate } from "react-router-dom";
 import { AllocationDetailSheet } from "./components/allocation-detail-sheet";
 import { CashHoldingsWidget } from "./components/cash-holdings-widget";
+import { DiversificationScoreCard } from "./components/diversification-score-card";
 import { CompactAllocationStrip } from "./components/compact-allocation-strip";
 import { PortfolioComposition } from "./components/composition-chart";
 import { HoldingCurrencyChart } from "./components/currency-chart";
@@ -143,7 +144,8 @@ export const HoldingsInsightsPage = ({ accountId: accountIdProp }: HoldingsInsig
 
     return (
       <div className="space-y-4">
-        {/* Row 1: Cash Balance (full width) */}
+        {/* Row 1: Diversification Score + Cash Balance */}
+        <DiversificationScoreCard allocations={allocations} isLoading={isLoading} />
         <CashHoldingsWidget cashHoldings={cashHoldings ?? []} isLoading={isLoading} />
 
         {/* Row 2: 4 semi-donut charts */}

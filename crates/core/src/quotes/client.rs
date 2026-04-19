@@ -699,6 +699,7 @@ impl MarketDataClient {
             dividend_yield: profile.dividend_yield,
             week_52_high: profile.week_52_high,
             week_52_low: profile.week_52_low,
+            expense_ratio: profile.expense_ratio,
         }
     }
 }

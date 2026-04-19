@@ -75,6 +75,24 @@ async fn delete_asset(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(serde::Deserialize)]
+struct ExpenseRatioBody {
+    #[serde(rename = "expenseRatio")]
+    expense_ratio: Option<f64>,
+}
+
+async fn update_expense_ratio(
+    Path(id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ExpenseRatioBody>,
+) -> ApiResult<StatusCode> {
+    state
+        .asset_service
+        .update_expense_ratio(&id, body.expense_ratio)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/assets", get(list_assets).post(create_asset))
@@ -82,4 +100,5 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/assets/profile", get(get_asset_profile))
         .route("/assets/profile/{id}", put(update_asset_profile))
         .route("/assets/pricing-mode/{id}", put(update_quote_mode))
+        .route("/assets/expense-ratio/{id}", put(update_expense_ratio))
 }

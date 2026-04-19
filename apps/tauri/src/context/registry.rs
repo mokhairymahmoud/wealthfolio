@@ -5,7 +5,7 @@ use wealthfolio_core::{
     self, accounts, activities,
     assets::{self, AlternativeAssetServiceTrait},
     events::DomainEventSink,
-    fx, goals, health, limits, portfolio, quotes, settings, taxonomies,
+    fx, goals, health, limits, portfolio, quotes, settings, tax, taxonomies,
 };
 use wealthfolio_device_sync::{engine::DeviceSyncRuntimeState, DeviceEnrollService};
 use wealthfolio_storage_sqlite::{
@@ -33,6 +33,7 @@ pub struct ServiceContext {
     pub activity_service: Arc<dyn activities::ActivityServiceTrait>,
     pub account_service: Arc<dyn accounts::AccountServiceTrait>,
     pub goal_service: Arc<dyn goals::GoalServiceTrait>,
+    pub tax_service: Arc<dyn tax::TaxServiceTrait>,
     pub asset_service: Arc<dyn assets::AssetServiceTrait>,
     pub quote_service: Arc<dyn quotes::QuoteServiceTrait>,
     pub limits_service: Arc<dyn limits::ContributionLimitServiceTrait>,
@@ -93,6 +94,10 @@ impl ServiceContext {
 
     pub fn goal_service(&self) -> Arc<dyn goals::GoalServiceTrait> {
         Arc::clone(&self.goal_service)
+    }
+
+    pub fn tax_service(&self) -> Arc<dyn tax::TaxServiceTrait> {
+        Arc::clone(&self.tax_service)
     }
 
     pub fn quote_service(&self) -> Arc<dyn quotes::QuoteServiceTrait> {

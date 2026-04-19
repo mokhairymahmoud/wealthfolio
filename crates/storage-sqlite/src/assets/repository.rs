@@ -496,4 +496,17 @@ impl AssetRepositoryTrait for AssetRepository {
             })
             .await
     }
+
+    async fn update_expense_ratio(&self, asset_id: &str, expense_ratio: Option<f64>) -> Result<()> {
+        let asset_id_owned = asset_id.to_string();
+        self.writer
+            .exec_tx(move |tx| -> Result<()> {
+                diesel::update(assets::table.filter(assets::id.eq(&asset_id_owned)))
+                    .set(assets::expense_ratio.eq(expense_ratio))
+                    .execute(tx.conn())
+                    .map_err(StorageError::from)?;
+                Ok(())
+            })
+            .await
+    }
 }
