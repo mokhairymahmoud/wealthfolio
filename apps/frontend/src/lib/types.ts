@@ -123,6 +123,144 @@ export interface NewTaxYearReport {
   baseCurrency?: string | null;
 }
 
+export type TaxEventType =
+  | "DIVIDEND_RECEIVED"
+  | "INTEREST_RECEIVED"
+  | "SECURITY_DISPOSAL"
+  | "FEE_PAID";
+
+export type TaxConfidence = "HIGH" | "MEDIUM" | "LOW" | "EXCLUDED";
+
+export interface TaxEvent {
+  id: string;
+  reportId: string;
+  eventType: TaxEventType;
+  category: string;
+  suggestedBox?: string | null;
+  accountId: string;
+  assetId?: string | null;
+  activityId?: string | null;
+  eventDate: string;
+  amountCurrency: string;
+  amountLocal?: string | number | null;
+  amountEur?: string | number | null;
+  taxableAmountEur?: string | number | null;
+  expensesEur?: string | number | null;
+  confidence: TaxConfidence;
+  included: boolean;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaxIssue {
+  id: string;
+  reportId: string;
+  severity: string;
+  code: string;
+  message: string;
+  accountId?: string | null;
+  activityId?: string | null;
+  taxEventId?: string | null;
+  resolvedAt?: string | null;
+  createdAt: string;
+}
+
+export interface TaxDocument {
+  id: string;
+  reportId: string;
+  documentType: string;
+  filename: string;
+  mimeType?: string | null;
+  sha256: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaxDocumentUpload {
+  reportId: string;
+  documentType: string;
+  filename: string;
+  mimeType?: string | null;
+  content: number[];
+}
+
+export interface TaxDocumentExtraction {
+  id: string;
+  documentId: string;
+  method: string;
+  status: string;
+  consentGranted: boolean;
+  rawTextPreview?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaxDocumentExtractionRequest {
+  documentId: string;
+  method: string;
+  consentGranted: boolean;
+}
+
+export interface ExtractedTaxField {
+  id: string;
+  extractionId: string;
+  fieldKey: string;
+  label: string;
+  mappedCategory?: string | null;
+  valueText?: string | null;
+  amountEur?: string | number | null;
+  confidence: number;
+  status: string;
+  confirmedAmountEur?: string | number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaxDocumentExtractionResult {
+  extraction: TaxDocumentExtraction;
+  fields: ExtractedTaxField[];
+}
+
+export interface ExtractedTaxFieldUpdate {
+  fieldId: string;
+  status: string;
+  confirmedAmountEur?: string | number | null;
+}
+
+export interface TaxReconciliationEntry {
+  id: string;
+  reportId: string;
+  category: string;
+  suggestedBox?: string | null;
+  appAmountEur?: string | number | null;
+  documentAmountEur?: string | number | null;
+  selectedAmountEur?: string | number | null;
+  deltaEur?: string | number | null;
+  status: string;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaxReconciliationEntryUpdate {
+  id: string;
+  selectedAmountEur?: string | number | null;
+  status: string;
+  notes?: string | null;
+}
+
+export interface TaxReportDetail {
+  report: TaxYearReport;
+  events: TaxEvent[];
+  issues: TaxIssue[];
+  documents: TaxDocument[];
+  extractions: TaxDocumentExtractionResult[];
+  reconciliation: TaxReconciliationEntry[];
+}
+
 /**
  * Activity interface matching the new backend model
  * @deprecated Use the new Activity interface with activityType field

@@ -34,11 +34,16 @@ process.env.BUILD_TARGET = "web";
 const children = new Map();
 let exiting = false;
 
-function spawnNamed(name, cmd, args, opts = {}) {
+function spawnNamed(name, cmd, args, { critical = true, ...opts } = {}) {
   const child = spawn(cmd, args, { stdio: "inherit", shell: false, ...opts });
   children.set(name, child);
   child.on("exit", (code, signal) => {
+    children.delete(name);
     if (exiting) return;
+    if (!critical) {
+      console.warn(`[${name}] exited (code=${code}, signal=${signal}) — non-critical, continuing`);
+      return;
+    }
     exiting = true;
     for (const [n, c] of children.entries()) {
       if (c.pid && n !== name) {
@@ -140,7 +145,7 @@ process.env.WF_ENABLE_VITE_PROXY = "true";
 
 spawnNamed("server", "cargo", ["run", "--manifest-path", "apps/server/Cargo.toml"]);
 
-spawnNamed("provider-sync", "pnpm", ["--filter", "@wealthfolio/provider-sync-service", "start:dev"]);
+spawnNamed("provider-sync", "pnpm", ["--filter", "@wealthfolio/provider-sync-service", "start:dev"], { critical: false });
 
 const apiTarget = viteProxyTarget();
 console.log(`Waiting for backend at ${apiTarget} before starting Vite...`);

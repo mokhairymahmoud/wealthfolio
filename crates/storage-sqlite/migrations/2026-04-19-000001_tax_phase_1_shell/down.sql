@@ -1,3 +1,16 @@
+DROP INDEX IF EXISTS tax_reconciliation_entries_report_category_idx;
+DROP TABLE IF EXISTS tax_reconciliation_entries;
+DROP INDEX IF EXISTS extracted_tax_fields_extraction_id_idx;
+DROP TABLE IF EXISTS extracted_tax_fields;
+DROP TABLE IF EXISTS tax_document_extractions;
+DROP INDEX IF EXISTS tax_documents_report_id_idx;
+DROP TABLE IF EXISTS tax_documents;
+DROP INDEX IF EXISTS tax_issues_report_id_idx;
+DROP TABLE IF EXISTS tax_issues;
+DROP TABLE IF EXISTS tax_lot_allocations;
+DROP TABLE IF EXISTS tax_event_sources;
+DROP INDEX IF EXISTS tax_events_report_id_idx;
+DROP TABLE IF EXISTS tax_events;
 DROP INDEX IF EXISTS tax_year_reports_tax_year_idx;
 DROP INDEX IF EXISTS tax_year_reports_one_draft_per_year;
 DROP TABLE IF EXISTS tax_year_reports;

@@ -43,7 +43,9 @@ use wealthfolio_core::{
     tax::{TaxService, TaxServiceTrait},
     taxonomies::{TaxonomyService, TaxonomyServiceTrait},
 };
-use wealthfolio_device_sync::{engine::DeviceSyncRuntimeState, DeviceEnrollService};
+use wealthfolio_device_sync::{
+    crypto::generate_root_key, engine::DeviceSyncRuntimeState, DeviceEnrollService,
+};
 use wealthfolio_storage_sqlite::{
     accounts::AccountRepository,
     activities::ActivityRepository,
@@ -61,6 +63,18 @@ use wealthfolio_storage_sqlite::{
     tax::TaxRepository,
     taxonomies::TaxonomyRepository,
 };
+
+const TAX_DOCUMENT_KEY_SECRET: &str = "tax_document_root_key_v1";
+
+fn ensure_tax_document_key(secret_store: &Arc<dyn SecretStore>) -> anyhow::Result<String> {
+    if let Some(existing) = secret_store.get_secret(TAX_DOCUMENT_KEY_SECRET)? {
+        return Ok(existing);
+    }
+
+    let key = generate_root_key();
+    secret_store.set_secret(TAX_DOCUMENT_KEY_SECRET, &key)?;
+    Ok(key)
+}
 
 pub struct AppState {
     /// Domain event sink for emitting events after mutations.
@@ -171,6 +185,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     )
     .map_err(anyhow::Error::new)?;
     let secret_store: Arc<dyn SecretStore> = Arc::new(file_store);
+    let tax_document_key = ensure_tax_document_key(&secret_store)?;
     std::env::set_var(
         "WF_SECRET_FILE",
         resolved_secret_path.to_string_lossy().to_string(),
@@ -376,6 +391,14 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         )
         .with_event_sink(domain_event_sink.clone()),
     );
+
+    let tax_repository = Arc::new(TaxRepository::new(
+        pool.clone(),
+        writer.clone(),
+        tax_document_key,
+    ));
+    let tax_service: Arc<dyn TaxServiceTrait + Send + Sync> =
+        Arc::new(TaxService::new(tax_repository, activity_service.clone()));
 
     // Alternative asset repository for alternative assets operations
     let alternative_asset_repository: Arc<dyn AlternativeAssetRepositoryTrait + Send + Sync> =

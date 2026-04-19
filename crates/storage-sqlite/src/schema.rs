@@ -479,6 +479,132 @@ diesel::table! {
 }
 
 diesel::table! {
+    tax_events (id) {
+        id -> Text,
+        report_id -> Text,
+        event_type -> Text,
+        category -> Text,
+        suggested_box -> Nullable<Text>,
+        account_id -> Text,
+        asset_id -> Nullable<Text>,
+        activity_id -> Nullable<Text>,
+        event_date -> Text,
+        amount_currency -> Text,
+        amount_local -> Nullable<Text>,
+        amount_eur -> Nullable<Text>,
+        taxable_amount_eur -> Nullable<Text>,
+        expenses_eur -> Nullable<Text>,
+        confidence -> Text,
+        included -> Integer,
+        notes -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    tax_event_sources (id) {
+        id -> Text,
+        tax_event_id -> Text,
+        source_type -> Text,
+        source_id -> Text,
+        description -> Nullable<Text>,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    tax_lot_allocations (id) {
+        id -> Text,
+        tax_event_id -> Text,
+        source_activity_id -> Text,
+        quantity -> Text,
+        acquisition_date -> Text,
+        cost_basis_eur -> Text,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    tax_issues (id) {
+        id -> Text,
+        report_id -> Text,
+        severity -> Text,
+        code -> Text,
+        message -> Text,
+        account_id -> Nullable<Text>,
+        activity_id -> Nullable<Text>,
+        tax_event_id -> Nullable<Text>,
+        resolved_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    tax_documents (id) {
+        id -> Text,
+        report_id -> Text,
+        document_type -> Text,
+        filename -> Text,
+        mime_type -> Nullable<Text>,
+        sha256 -> Text,
+        encrypted_content -> Text,
+        encryption_key_ref -> Text,
+        size_bytes -> Integer,
+        uploaded_at -> Timestamp,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    tax_document_extractions (id) {
+        id -> Text,
+        document_id -> Text,
+        method -> Text,
+        status -> Text,
+        consent_granted -> Integer,
+        raw_text_preview -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    extracted_tax_fields (id) {
+        id -> Text,
+        extraction_id -> Text,
+        field_key -> Text,
+        label -> Text,
+        mapped_category -> Nullable<Text>,
+        value_text -> Nullable<Text>,
+        amount_eur -> Nullable<Text>,
+        confidence -> Double,
+        status -> Text,
+        confirmed_amount_eur -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    tax_reconciliation_entries (id) {
+        id -> Text,
+        report_id -> Text,
+        category -> Text,
+        suggested_box -> Nullable<Text>,
+        app_amount_eur -> Nullable<Text>,
+        document_amount_eur -> Nullable<Text>,
+        selected_amount_eur -> Nullable<Text>,
+        delta_eur -> Nullable<Text>,
+        status -> Text,
+        notes -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     tax_year_reports (id) {
         id -> Text,
         tax_year -> Integer,
@@ -540,6 +666,13 @@ diesel::joinable!(goal_plans -> goals (goal_id));
 diesel::joinable!(goals_allocation -> goals (goal_id));
 diesel::joinable!(import_runs -> accounts (account_id));
 diesel::joinable!(quotes -> assets (asset_id));
+diesel::joinable!(tax_documents -> tax_year_reports (report_id));
+diesel::joinable!(tax_document_extractions -> tax_documents (document_id));
+diesel::joinable!(extracted_tax_fields -> tax_document_extractions (extraction_id));
+diesel::joinable!(tax_events -> tax_year_reports (report_id));
+diesel::joinable!(tax_event_sources -> tax_events (tax_event_id));
+diesel::joinable!(tax_lot_allocations -> tax_events (tax_event_id));
+diesel::joinable!(tax_reconciliation_entries -> tax_year_reports (report_id));
 diesel::joinable!(taxonomy_categories -> taxonomies (taxonomy_id));
 
 diesel::joinable!(import_account_templates -> import_templates (template_id));
@@ -577,7 +710,15 @@ diesel::allow_tables_to_appear_in_same_query!(
     sync_entity_metadata,
     sync_outbox,
     sync_table_state,
+    extracted_tax_fields,
+    tax_document_extractions,
+    tax_documents,
+    tax_events,
+    tax_event_sources,
+    tax_issues,
+    tax_lot_allocations,
     tax_profiles,
+    tax_reconciliation_entries,
     tax_year_reports,
     taxonomies,
     taxonomy_categories,

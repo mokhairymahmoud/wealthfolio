@@ -99,6 +99,15 @@ export const COMMANDS: CommandMap = {
   list_tax_year_reports: { method: "GET", path: "/taxes/reports" },
   create_tax_year_report: { method: "POST", path: "/taxes/reports" },
   get_tax_year_report: { method: "GET", path: "/taxes/reports" },
+  get_tax_report_detail: { method: "GET", path: "/taxes/reports" },
+  regenerate_tax_year_report: { method: "POST", path: "/taxes/reports" },
+  finalize_tax_year_report: { method: "POST", path: "/taxes/reports" },
+  upload_tax_document: { method: "POST", path: "/taxes/documents" },
+  list_tax_documents: { method: "GET", path: "/taxes/reports" },
+  extract_tax_document: { method: "POST", path: "/taxes/documents/extract" },
+  update_extracted_tax_field: { method: "POST", path: "/taxes/extracted-fields" },
+  reconcile_tax_year_report: { method: "POST", path: "/taxes/reports" },
+  update_tax_reconciliation_entry: { method: "POST", path: "/taxes/reconciliation" },
   // FX
   get_latest_exchange_rates: { method: "GET", path: "/exchange-rates/latest" },
   update_exchange_rate: { method: "PUT", path: "/exchange-rates" },
@@ -831,6 +840,51 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "get_tax_year_report": {
       const { id } = payload as { id: string };
       url += `/${encodeURIComponent(id)}`;
+      break;
+    }
+    case "get_tax_report_detail": {
+      const { id } = payload as { id: string };
+      url += `/${encodeURIComponent(id)}/detail`;
+      break;
+    }
+    case "regenerate_tax_year_report": {
+      const { id } = payload as { id: string };
+      url += `/${encodeURIComponent(id)}/regenerate`;
+      break;
+    }
+    case "finalize_tax_year_report": {
+      const { id } = payload as { id: string };
+      url += `/${encodeURIComponent(id)}/finalize`;
+      break;
+    }
+    case "upload_tax_document": {
+      const { upload } = payload as { upload: Record<string, unknown> };
+      body = JSON.stringify(upload);
+      break;
+    }
+    case "list_tax_documents": {
+      const { reportId } = payload as { reportId: string };
+      url += `/${encodeURIComponent(reportId)}/documents`;
+      break;
+    }
+    case "extract_tax_document": {
+      const { request } = payload as { request: Record<string, unknown> };
+      body = JSON.stringify(request);
+      break;
+    }
+    case "update_extracted_tax_field": {
+      const { update } = payload as { update: Record<string, unknown> };
+      body = JSON.stringify(update);
+      break;
+    }
+    case "reconcile_tax_year_report": {
+      const { id } = payload as { id: string };
+      url += `/${encodeURIComponent(id)}/reconcile`;
+      break;
+    }
+    case "update_tax_reconciliation_entry": {
+      const { update } = payload as { update: Record<string, unknown> };
+      body = JSON.stringify(update);
       break;
     }
     case "get_asset_profile": {

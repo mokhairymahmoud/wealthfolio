@@ -29,11 +29,14 @@ use wealthfolio_core::{
         valuation::ValuationService,
     },
     quotes::{QuoteService, QuoteServiceTrait},
+    secrets::SecretStore,
     settings::{SettingsRepositoryTrait, SettingsService, SettingsServiceTrait},
     tax::TaxService,
     taxonomies::TaxonomyService,
 };
-use wealthfolio_device_sync::{engine::DeviceSyncRuntimeState, DeviceEnrollService};
+use wealthfolio_device_sync::{
+    crypto::generate_root_key, engine::DeviceSyncRuntimeState, DeviceEnrollService,
+};
 use wealthfolio_storage_sqlite::{
     accounts::AccountRepository,
     activities::ActivityRepository,
@@ -51,6 +54,20 @@ use wealthfolio_storage_sqlite::{
     tax::TaxRepository,
     taxonomies::TaxonomyRepository,
 };
+
+const TAX_DOCUMENT_KEY_SECRET: &str = "tax_document_root_key_v1";
+
+fn ensure_tax_document_key(
+    secret_store: &Arc<dyn SecretStore>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(existing) = secret_store.get_secret(TAX_DOCUMENT_KEY_SECRET)? {
+        return Ok(existing);
+    }
+
+    let key = generate_root_key();
+    secret_store.set_secret(TAX_DOCUMENT_KEY_SECRET, &key)?;
+    Ok(key)
+}
 
 /// Result of context initialization, including the receiver for domain events.
 pub struct ContextInitResult {
@@ -84,7 +101,6 @@ pub async fn initialize_context(
     let activity_repository = Arc::new(ActivityRepository::new(pool.clone(), writer.clone()));
     let asset_repository = Arc::new(AssetRepository::new(pool.clone(), writer.clone()));
     let goal_repo = Arc::new(GoalRepository::new(pool.clone(), writer.clone()));
-    let tax_repository = Arc::new(TaxRepository::new(pool.clone(), writer.clone()));
     let market_data_repo = Arc::new(MarketDataRepository::new(pool.clone(), writer.clone()));
     let limit_repository = Arc::new(ContributionLimitRepository::new(
         pool.clone(),
@@ -120,6 +136,7 @@ pub async fn initialize_context(
     let instance_id = Arc::new(settings.instance_id.clone());
 
     let secret_store = shared_secret_store();
+    let tax_document_key = ensure_tax_document_key(&secret_store)?;
 
     // Custom provider repository
     let custom_provider_repository = Arc::new(
@@ -203,7 +220,15 @@ pub async fn initialize_context(
         .with_event_sink(domain_event_sink.clone()),
     );
     let goal_service = Arc::new(GoalService::new(goal_repo.clone(), account_service.clone()));
-    let tax_service = Arc::new(TaxService::new(tax_repository.clone()));
+    let tax_repository = Arc::new(TaxRepository::new(
+        pool.clone(),
+        writer.clone(),
+        tax_document_key,
+    ));
+    let tax_service = Arc::new(TaxService::new(
+        tax_repository.clone(),
+        activity_service.clone(),
+    ));
     let limits_service = Arc::new(ContributionLimitService::new_with_timezone(
         fx_service.clone(),
         limit_repository.clone(),

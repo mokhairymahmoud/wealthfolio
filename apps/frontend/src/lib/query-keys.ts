@@ -147,6 +147,8 @@ export const QueryKeys = {
   TAX_PROFILE: "taxProfile",
   ACCOUNT_TAX_PROFILES: "accountTaxProfiles",
   TAX_YEAR_REPORTS: "taxYearReports",
+  TAX_REPORT_DETAIL: "taxReportDetail",
+  taxReportDetail: (id: string) => [QueryKeys.TAX_REPORT_DETAIL, id],
 
   // Snapshot Management
   SNAPSHOTS: "snapshots",

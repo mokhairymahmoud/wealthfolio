@@ -1,9 +1,18 @@
 import type {
   AccountTaxProfile,
   AccountTaxProfileUpdate,
+  ExtractedTaxField,
+  ExtractedTaxFieldUpdate,
   NewTaxYearReport,
+  TaxDocument,
+  TaxDocumentExtractionRequest,
+  TaxDocumentExtractionResult,
+  TaxDocumentUpload,
   TaxProfile,
   TaxProfileUpdate,
+  TaxReconciliationEntry,
+  TaxReconciliationEntryUpdate,
+  TaxReportDetail,
   TaxYearReport,
 } from "@/lib/types";
 
@@ -37,4 +46,48 @@ export const getTaxYearReport = async (id: string): Promise<TaxYearReport | null
 
 export const createTaxYearReport = async (report: NewTaxYearReport): Promise<TaxYearReport> => {
   return invoke<TaxYearReport>("create_tax_year_report", { report });
+};
+
+export const getTaxReportDetail = async (id: string): Promise<TaxReportDetail | null> => {
+  return invoke<TaxReportDetail | null>("get_tax_report_detail", { id });
+};
+
+export const regenerateTaxYearReport = async (id: string): Promise<TaxReportDetail> => {
+  return invoke<TaxReportDetail>("regenerate_tax_year_report", { id });
+};
+
+export const finalizeTaxYearReport = async (id: string): Promise<TaxYearReport> => {
+  return invoke<TaxYearReport>("finalize_tax_year_report", { id });
+};
+
+export const uploadTaxDocument = async (upload: TaxDocumentUpload): Promise<TaxDocument> => {
+  return invoke<TaxDocument>("upload_tax_document", { upload });
+};
+
+export const listTaxDocuments = async (reportId: string): Promise<TaxDocument[]> => {
+  return invoke<TaxDocument[]>("list_tax_documents", { reportId });
+};
+
+export const extractTaxDocument = async (
+  request: TaxDocumentExtractionRequest,
+): Promise<TaxDocumentExtractionResult> => {
+  return invoke<TaxDocumentExtractionResult>("extract_tax_document", { request });
+};
+
+export const updateExtractedTaxField = async (
+  update: ExtractedTaxFieldUpdate,
+): Promise<ExtractedTaxField> => {
+  return invoke<ExtractedTaxField>("update_extracted_tax_field", { update });
+};
+
+export const reconcileTaxYearReport = async (
+  id: string,
+): Promise<TaxReconciliationEntry[]> => {
+  return invoke<TaxReconciliationEntry[]>("reconcile_tax_year_report", { id });
+};
+
+export const updateTaxReconciliationEntry = async (
+  update: TaxReconciliationEntryUpdate,
+): Promise<TaxReconciliationEntry> => {
+  return invoke<TaxReconciliationEntry>("update_tax_reconciliation_entry", { update });
 };

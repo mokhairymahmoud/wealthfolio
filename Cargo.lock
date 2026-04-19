@@ -8236,6 +8236,7 @@ version = "3.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "diesel",
  "diesel_migrations",
