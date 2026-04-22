@@ -102,12 +102,16 @@ export const COMMANDS: CommandMap = {
   get_tax_report_detail: { method: "GET", path: "/taxes/reports" },
   regenerate_tax_year_report: { method: "POST", path: "/taxes/reports" },
   finalize_tax_year_report: { method: "POST", path: "/taxes/reports" },
+  amend_tax_year_report: { method: "POST", path: "/taxes/reports" },
   upload_tax_document: { method: "POST", path: "/taxes/documents" },
   list_tax_documents: { method: "GET", path: "/taxes/reports" },
+  delete_tax_document: { method: "DELETE", path: "/taxes/documents" },
+  get_tax_document_download: { method: "GET", path: "/taxes/documents" },
   extract_tax_document: { method: "POST", path: "/taxes/documents/extract" },
   update_extracted_tax_field: { method: "POST", path: "/taxes/extracted-fields" },
   reconcile_tax_year_report: { method: "POST", path: "/taxes/reports" },
   update_tax_reconciliation_entry: { method: "POST", path: "/taxes/reconciliation" },
+  update_tax_event: { method: "POST", path: "/taxes/events" },
   // FX
   get_latest_exchange_rates: { method: "GET", path: "/exchange-rates/latest" },
   update_exchange_rate: { method: "PUT", path: "/exchange-rates" },
@@ -857,6 +861,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       url += `/${encodeURIComponent(id)}/finalize`;
       break;
     }
+    case "amend_tax_year_report": {
+      const { id } = payload as { id: string };
+      url += `/${encodeURIComponent(id)}/amend`;
+      break;
+    }
     case "upload_tax_document": {
       const { upload } = payload as { upload: Record<string, unknown> };
       body = JSON.stringify(upload);
@@ -865,6 +874,16 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "list_tax_documents": {
       const { reportId } = payload as { reportId: string };
       url += `/${encodeURIComponent(reportId)}/documents`;
+      break;
+    }
+    case "delete_tax_document": {
+      const { documentId } = payload as { documentId: string };
+      url += `/${encodeURIComponent(documentId)}`;
+      break;
+    }
+    case "get_tax_document_download": {
+      const { documentId } = payload as { documentId: string };
+      url += `/${encodeURIComponent(documentId)}/download`;
       break;
     }
     case "extract_tax_document": {
@@ -883,6 +902,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     case "update_tax_reconciliation_entry": {
+      const { update } = payload as { update: Record<string, unknown> };
+      body = JSON.stringify(update);
+      break;
+    }
+    case "update_tax_event": {
       const { update } = payload as { update: Record<string, unknown> };
       body = JSON.stringify(update);
       break;
@@ -1633,6 +1657,18 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     return {
       filename: parsed.filename,
       data: fromBase64(parsed.dataB64),
+    } as T;
+  }
+  if (command === "get_tax_document_download") {
+    const parsed = (await res.json()) as {
+      filename: string;
+      mimeType: string | null;
+      contentB64: string;
+    };
+    return {
+      filename: parsed.filename,
+      mimeType: parsed.mimeType,
+      content: fromBase64(parsed.contentB64),
     } as T;
   }
   if (command === "backup_database_to_path") {

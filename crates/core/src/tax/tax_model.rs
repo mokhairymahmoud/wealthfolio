@@ -196,8 +196,18 @@ pub struct TaxEvent {
     pub confidence: TaxConfidence,
     pub included: bool,
     pub notes: Option<String>,
+    pub user_override: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaxEventUpdate {
+    pub id: String,
+    pub included: bool,
+    pub taxable_amount_eur: Option<Decimal>,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -313,6 +323,14 @@ pub struct TaxDocument {
 pub struct TaxDocumentUpload {
     pub report_id: String,
     pub document_type: String,
+    pub filename: String,
+    pub mime_type: Option<String>,
+    pub content: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaxDocumentDownload {
     pub filename: String,
     pub mime_type: Option<String>,
     pub content: Vec<u8>,

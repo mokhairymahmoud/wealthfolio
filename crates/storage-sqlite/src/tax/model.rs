@@ -113,6 +113,7 @@ pub struct TaxEventDB {
     pub confidence: String,
     pub included: i32,
     pub notes: Option<String>,
+    pub user_override: i32,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -335,6 +336,7 @@ impl From<TaxEventDB> for TaxEvent {
                 .unwrap_or(TaxConfidence::Low),
             included: db.included != 0,
             notes: db.notes,
+            user_override: db.user_override != 0,
             created_at: db.created_at,
             updated_at: db.updated_at,
         }

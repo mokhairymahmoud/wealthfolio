@@ -117,13 +117,26 @@ export {
 
 // Tax Commands
 export {
+  amendTaxYearReport,
   createTaxYearReport,
+  deleteTaxDocument,
+  downloadTaxDocument,
+  extractTaxDocument,
+  finalizeTaxYearReport,
   getAccountTaxProfiles,
   getTaxProfile,
+  getTaxReportDetail,
   getTaxYearReport,
+  listTaxDocuments,
   listTaxYearReports,
+  reconcileTaxYearReport,
+  regenerateTaxYearReport,
   updateAccountTaxProfile,
+  updateExtractedTaxField,
   updateTaxProfile,
+  updateTaxEvent,
+  updateTaxReconciliationEntry,
+  uploadTaxDocument,
 } from "../shared/taxes";
 
 // Secrets Commands

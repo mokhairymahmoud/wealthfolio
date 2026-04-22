@@ -1,5 +1,8 @@
 import {
+  amendTaxYearReport,
   createTaxYearReport,
+  deleteTaxDocument,
+  downloadTaxDocument,
   extractTaxDocument,
   finalizeTaxYearReport,
   getAccountTaxProfiles,
@@ -11,14 +14,24 @@ import {
   reconcileTaxYearReport,
   updateAccountTaxProfile,
   updateExtractedTaxField,
+  updateTaxEvent,
   uploadTaxDocument,
 } from "@/adapters";
 import { AccountType } from "@/lib/constants";
 import { QueryKeys } from "@/lib/query-keys";
-import type { Account, AccountTaxProfile, TaxReportDetail, TaxYearReport } from "@/lib/types";
+import type {
+  Account,
+  AccountTaxProfile,
+  TaxEvent,
+  TaxEventUpdate,
+  TaxReportDetail,
+  TaxYearReport,
+} from "@/lib/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@wealthfolio/ui/components/ui/badge";
 import { Button } from "@wealthfolio/ui/components/ui/button";
+import { Checkbox } from "@wealthfolio/ui/components/ui/checkbox";
+import { Input } from "@wealthfolio/ui/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@wealthfolio/ui/components/ui/card";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
@@ -30,14 +43,22 @@ import {
   TableHeader,
   TableRow,
 } from "@wealthfolio/ui/components/ui/table";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 function currentTaxYear() {
   return new Date().getFullYear();
 }
 
 function findReportForYear(reports: TaxYearReport[] | undefined, year: number) {
-  return reports?.find((report) => report.taxYear === year && report.jurisdiction === "FR");
+  const matches = (reports ?? []).filter(
+    (report) => report.taxYear === year && report.jurisdiction === "FR",
+  );
+  const statusRank: Record<string, number> = {
+    DRAFT: 0,
+    AMENDED_DRAFT: 1,
+    FINALIZED: 2,
+  };
+  return matches.sort((a, b) => (statusRank[a.status] ?? 99) - (statusRank[b.status] ?? 99))[0];
 }
 
 function accountProfileById(profiles: AccountTaxProfile[] | undefined) {
@@ -61,6 +82,89 @@ function formatAmount(value: number | string | null | undefined) {
 
 function flattenExtractedFields(detail: TaxReportDetail | null | undefined) {
   return (detail?.extractions ?? []).flatMap((result) => result.fields);
+}
+
+function TaxEventRow({
+  event,
+  disabled,
+  onUpdate,
+}: {
+  event: TaxEvent;
+  disabled: boolean;
+  onUpdate: (update: TaxEventUpdate) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const startEdit = useCallback(() => {
+    if (disabled) return;
+    setDraft(event.taxableAmountEur != null ? String(event.taxableAmountEur) : "");
+    setEditing(true);
+  }, [disabled, event.taxableAmountEur]);
+
+  const commitEdit = useCallback(() => {
+    setEditing(false);
+    const parsed = draft === "" ? null : Number(draft);
+    if (parsed !== null && !Number.isFinite(parsed)) return;
+    const current = event.taxableAmountEur != null ? Number(event.taxableAmountEur) : null;
+    if (parsed === current) return;
+    onUpdate({
+      id: event.id,
+      included: event.included,
+      taxableAmountEur: parsed,
+      notes: event.notes ?? null,
+    });
+  }, [draft, event, onUpdate]);
+
+  return (
+    <TableRow key={event.id} className={event.userOverride ? "bg-muted/40" : undefined}>
+      <TableCell>
+        <Checkbox
+          checked={event.included}
+          disabled={disabled}
+          onCheckedChange={(checked) =>
+            onUpdate({
+              id: event.id,
+              included: checked === true,
+              taxableAmountEur: event.taxableAmountEur as number | null,
+              notes: event.notes ?? null,
+            })
+          }
+        />
+      </TableCell>
+      <TableCell>{event.eventDate}</TableCell>
+      <TableCell>{event.eventType}</TableCell>
+      <TableCell>{event.accountId}</TableCell>
+      <TableCell
+        className={!disabled ? "cursor-pointer" : undefined}
+        onClick={!editing ? startEdit : undefined}
+      >
+        {editing ? (
+          <Input
+            className="h-7 w-28 text-sm"
+            type="number"
+            step="0.01"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitEdit();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            autoFocus
+          />
+        ) : (
+          formatAmount(event.taxableAmountEur)
+        )}
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-1">
+          <Badge variant={event.included ? "outline" : "destructive"}>{event.confidence}</Badge>
+          {event.userOverride && <Icons.Pencil className="text-muted-foreground h-3 w-3" />}
+        </div>
+      </TableCell>
+    </TableRow>
+  );
 }
 
 function TaxesSkeleton() {
@@ -106,7 +210,8 @@ export default function TaxesPage() {
 
   const { data: reportDetail, isLoading: isReportDetailLoading } = useQuery({
     queryKey: [QueryKeys.TAX_REPORT_DETAIL, selectedReportId],
-    queryFn: () => (selectedReportId ? getTaxReportDetail(selectedReportId) : Promise.resolve(null)),
+    queryFn: () =>
+      selectedReportId ? getTaxReportDetail(selectedReportId) : Promise.resolve(null),
     enabled: Boolean(selectedReportId),
   });
 
@@ -135,6 +240,13 @@ export default function TaxesPage() {
     onSuccess: (report) => {
       queryClient.invalidateQueries({ queryKey: [QueryKeys.TAX_YEAR_REPORTS] });
       queryClient.invalidateQueries({ queryKey: QueryKeys.taxReportDetail(report.id) });
+    },
+  });
+
+  const amendReportMutation = useMutation({
+    mutationFn: (reportId: string) => amendTaxYearReport(reportId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.TAX_YEAR_REPORTS] });
     },
   });
 
@@ -188,6 +300,45 @@ export default function TaxesPage() {
     },
   });
 
+  const deleteDocumentMutation = useMutation({
+    mutationFn: (documentId: string) => deleteTaxDocument(documentId),
+    onSuccess: () => {
+      if (selectedReport) {
+        queryClient.invalidateQueries({ queryKey: QueryKeys.taxReportDetail(selectedReport.id) });
+      }
+    },
+  });
+
+  const downloadDocumentMutation = useMutation({
+    mutationFn: (documentId: string) => downloadTaxDocument(documentId),
+    onSuccess: (download) => {
+      const buffer = download.content.buffer.slice(
+        download.content.byteOffset,
+        download.content.byteOffset + download.content.byteLength,
+      ) as ArrayBuffer;
+      const blob = new Blob([buffer], {
+        type: download.mimeType ?? "application/octet-stream",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = window.document.createElement("a");
+      link.href = url;
+      link.download = download.filename;
+      window.document.body.appendChild(link);
+      link.click();
+      window.document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    },
+  });
+
+  const updateTaxEventMutation = useMutation({
+    mutationFn: (update: TaxEventUpdate) => updateTaxEvent(update),
+    onSuccess: () => {
+      if (selectedReport) {
+        queryClient.invalidateQueries({ queryKey: QueryKeys.taxReportDetail(selectedReport.id) });
+      }
+    },
+  });
+
   const updateAccountTaxProfileMutation = useMutation({
     mutationFn: (account: Account) =>
       updateAccountTaxProfile({
@@ -207,7 +358,10 @@ export default function TaxesPage() {
     () => (accounts ?? []).filter((account) => account.accountType === AccountType.SECURITIES),
     [accounts],
   );
-  const accountProfiles = useMemo(() => accountProfileById(accountTaxProfiles), [accountTaxProfiles]);
+  const accountProfiles = useMemo(
+    () => accountProfileById(accountTaxProfiles),
+    [accountTaxProfiles],
+  );
   const extractedFields = flattenExtractedFields(reportDetail);
   const isLoading =
     isProfileLoading || areAccountsLoading || areAccountProfilesLoading || areReportsLoading;
@@ -246,38 +400,47 @@ export default function TaxesPage() {
             )}
             {selectedReport ? "Open Draft" : "Create Draft"}
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => selectedReport && regenerateReportMutation.mutate(selectedReport.id)}
-            disabled={
-              !selectedReport ||
-              selectedReport.status === "FINALIZED" ||
-              regenerateReportMutation.isPending
-            }
-          >
-            {regenerateReportMutation.isPending ? (
-              <Icons.Spinner className="h-4 w-4 animate-spin" />
-            ) : (
-              <Icons.RefreshCw className="h-4 w-4" />
-            )}
-            Generate
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => selectedReport && finalizeReportMutation.mutate(selectedReport.id)}
-            disabled={
-              !selectedReport ||
-              selectedReport.status === "FINALIZED" ||
-              finalizeReportMutation.isPending
-            }
-          >
-            {finalizeReportMutation.isPending ? (
-              <Icons.Spinner className="h-4 w-4 animate-spin" />
-            ) : (
-              <Icons.ShieldCheck className="h-4 w-4" />
-            )}
-            Finalize
-          </Button>
+          {selectedReport?.status === "FINALIZED" ? (
+            <Button
+              variant="outline"
+              onClick={() => selectedReport && amendReportMutation.mutate(selectedReport.id)}
+              disabled={!selectedReport || amendReportMutation.isPending}
+            >
+              {amendReportMutation.isPending ? (
+                <Icons.Spinner className="h-4 w-4 animate-spin" />
+              ) : (
+                <Icons.Pencil className="h-4 w-4" />
+              )}
+              Amend
+            </Button>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => selectedReport && regenerateReportMutation.mutate(selectedReport.id)}
+                disabled={!selectedReport || regenerateReportMutation.isPending}
+              >
+                {regenerateReportMutation.isPending ? (
+                  <Icons.Spinner className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Icons.RefreshCw className="h-4 w-4" />
+                )}
+                Generate
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => selectedReport && finalizeReportMutation.mutate(selectedReport.id)}
+                disabled={!selectedReport || finalizeReportMutation.isPending}
+              >
+                {finalizeReportMutation.isPending ? (
+                  <Icons.Spinner className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Icons.ShieldCheck className="h-4 w-4" />
+                )}
+                Finalize
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -300,7 +463,11 @@ export default function TaxesPage() {
           <CardContent>
             <div className="flex items-center gap-2">
               <span className="text-2xl font-semibold">{taxYear}</span>
-              {selectedReport ? <Badge>{selectedReport.status}</Badge> : <Badge variant="outline">None</Badge>}
+              {selectedReport ? (
+                <Badge>{selectedReport.status}</Badge>
+              ) : (
+                <Badge variant="outline">None</Badge>
+              )}
             </div>
             <p className="text-muted-foreground text-xs">
               {selectedReport?.rulePackVersion ?? `FR-${taxYear}-securities-v1`}
@@ -345,7 +512,11 @@ export default function TaxesPage() {
                     <TableCell className="font-medium">{account.name}</TableCell>
                     <TableCell>{account.currency}</TableCell>
                     <TableCell>
-                      {taxProfile ? <Badge>{taxProfile.regime}</Badge> : <Badge variant="outline">Unset</Badge>}
+                      {taxProfile ? (
+                        <Badge>{taxProfile.regime}</Badge>
+                      ) : (
+                        <Badge variant="outline">Unset</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -414,7 +585,33 @@ export default function TaxesPage() {
                         {document.documentType} · {Math.round(document.sizeBytes / 1024)} KB
                       </div>
                     </div>
-                    <Badge variant="outline">Encrypted</Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">Encrypted</Badge>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label="Download document"
+                        disabled={downloadDocumentMutation.isPending}
+                        onClick={() => downloadDocumentMutation.mutate(document.id)}
+                      >
+                        <Icons.Download className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label="Delete document"
+                        disabled={
+                          deleteDocumentMutation.isPending || selectedReport?.status === "FINALIZED"
+                        }
+                        onClick={() => {
+                          if (window.confirm(`Delete ${document.filename}?`)) {
+                            deleteDocumentMutation.mutate(document.id);
+                          }
+                        }}
+                      >
+                        <Icons.Trash className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
                 {isReportDetailLoading && <Skeleton className="h-12" />}
@@ -448,7 +645,9 @@ export default function TaxesPage() {
                           {field.valueText}
                         </div>
                       </TableCell>
-                      <TableCell>{formatAmount(field.confirmedAmountEur ?? field.amountEur)}</TableCell>
+                      <TableCell>
+                        {formatAmount(field.confirmedAmountEur ?? field.amountEur)}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={field.status === "CONFIRMED" ? "default" : "outline"}>
                           {field.status}
@@ -459,9 +658,7 @@ export default function TaxesPage() {
                           size="sm"
                           variant="outline"
                           onClick={() => confirmFieldMutation.mutate(field.id)}
-                          disabled={
-                            field.status === "CONFIRMED" || confirmFieldMutation.isPending
-                          }
+                          disabled={field.status === "CONFIRMED" || confirmFieldMutation.isPending}
                         >
                           Confirm
                         </Button>
@@ -570,6 +767,7 @@ export default function TaxesPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">Incl.</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Account</TableHead>
@@ -579,21 +777,18 @@ export default function TaxesPage() {
               </TableHeader>
               <TableBody>
                 {(reportDetail?.events ?? []).map((event) => (
-                  <TableRow key={event.id}>
-                    <TableCell>{event.eventDate}</TableCell>
-                    <TableCell>{event.eventType}</TableCell>
-                    <TableCell>{event.accountId}</TableCell>
-                    <TableCell>{formatAmount(event.taxableAmountEur)}</TableCell>
-                    <TableCell>
-                      <Badge variant={event.included ? "outline" : "destructive"}>
-                        {event.confidence}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
+                  <TaxEventRow
+                    key={event.id}
+                    event={event}
+                    disabled={
+                      selectedReport.status === "FINALIZED" || updateTaxEventMutation.isPending
+                    }
+                    onUpdate={(update) => updateTaxEventMutation.mutate(update)}
+                  />
                 ))}
                 {(reportDetail?.events ?? []).length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-muted-foreground py-8 text-center">
+                    <TableCell colSpan={6} className="text-muted-foreground py-8 text-center">
                       No tax events generated.
                     </TableCell>
                   </TableRow>

@@ -497,6 +497,7 @@ diesel::table! {
         confidence -> Text,
         included -> Integer,
         notes -> Nullable<Text>,
+        user_override -> Integer,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }

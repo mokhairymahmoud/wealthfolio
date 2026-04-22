@@ -5,9 +5,10 @@ use log::debug;
 use tauri::State;
 use wealthfolio_core::tax::{
     AccountTaxProfile, AccountTaxProfileUpdate, ExtractedTaxField, ExtractedTaxFieldUpdate,
-    NewTaxYearReport, TaxDocument, TaxDocumentExtractionRequest, TaxDocumentExtractionResult,
-    TaxDocumentUpload, TaxProfile, TaxProfileUpdate, TaxReconciliationEntry,
-    TaxReconciliationEntryUpdate, TaxReportDetail, TaxYearReport,
+    NewTaxYearReport, TaxDocument, TaxDocumentDownload, TaxDocumentExtractionRequest,
+    TaxDocumentExtractionResult, TaxDocumentUpload, TaxEvent, TaxEventUpdate, TaxProfile,
+    TaxProfileUpdate, TaxReconciliationEntry, TaxReconciliationEntryUpdate, TaxReportDetail,
+    TaxYearReport,
 };
 
 #[tauri::command]
@@ -131,6 +132,19 @@ pub async fn finalize_tax_year_report(
 }
 
 #[tauri::command]
+pub async fn amend_tax_year_report(
+    id: String,
+    state: State<'_, Arc<ServiceContext>>,
+) -> Result<TaxYearReport, String> {
+    debug!("Amending tax year report...");
+    state
+        .tax_service()
+        .amend_tax_year_report(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn upload_tax_document(
     upload: TaxDocumentUpload,
     state: State<'_, Arc<ServiceContext>>,
@@ -152,6 +166,31 @@ pub async fn list_tax_documents(
     state
         .tax_service()
         .list_tax_documents(&report_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_tax_document(
+    document_id: String,
+    state: State<'_, Arc<ServiceContext>>,
+) -> Result<(), String> {
+    debug!("Deleting tax document...");
+    state
+        .tax_service()
+        .delete_tax_document(&document_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_tax_document_download(
+    document_id: String,
+    state: State<'_, Arc<ServiceContext>>,
+) -> Result<Option<TaxDocumentDownload>, String> {
+    debug!("Fetching tax document download...");
+    state
+        .tax_service()
+        .get_tax_document_download(&document_id)
         .map_err(|e| e.to_string())
 }
 
@@ -203,6 +242,19 @@ pub async fn update_tax_reconciliation_entry(
     state
         .tax_service()
         .update_tax_reconciliation_entry(update)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_tax_event(
+    update: TaxEventUpdate,
+    state: State<'_, Arc<ServiceContext>>,
+) -> Result<TaxEvent, String> {
+    debug!("Updating tax event...");
+    state
+        .tax_service()
+        .update_tax_event(update)
         .await
         .map_err(|e| e.to_string())
 }

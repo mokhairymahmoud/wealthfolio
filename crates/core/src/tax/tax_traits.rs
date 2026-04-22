@@ -4,9 +4,9 @@ use crate::errors::Result;
 use crate::tax::{
     AccountTaxProfile, AccountTaxProfileUpdate, CompiledTaxEvent, ExtractedTaxField,
     ExtractedTaxFieldUpdate, NewTaxIssue, NewTaxReconciliationEntry, NewTaxYearReport, TaxDocument,
-    TaxDocumentExtractionRequest, TaxDocumentExtractionResult, TaxEvent, TaxIssue, TaxProfile,
-    TaxProfileUpdate, TaxReconciliationEntry, TaxReconciliationEntryUpdate, TaxReportDetail,
-    TaxYearReport,
+    TaxDocumentDownload, TaxDocumentExtractionRequest, TaxDocumentExtractionResult, TaxEvent,
+    TaxEventUpdate, TaxIssue, TaxProfile, TaxProfileUpdate, TaxReconciliationEntry,
+    TaxReconciliationEntryUpdate, TaxReportDetail, TaxYearReport,
 };
 
 #[async_trait]
@@ -35,6 +35,7 @@ pub trait TaxRepositoryTrait: Send + Sync {
         base_currency: String,
         rule_pack_version: String,
     ) -> Result<TaxYearReport>;
+    async fn create_amended_report(&self, parent: TaxYearReport) -> Result<TaxYearReport>;
     async fn replace_generated_report_data(
         &self,
         report_id: &str,
@@ -55,7 +56,9 @@ pub trait TaxRepositoryTrait: Send + Sync {
         content: Vec<u8>,
     ) -> Result<TaxDocument>;
     fn list_tax_documents(&self, report_id: &str) -> Result<Vec<TaxDocument>>;
+    fn get_tax_document(&self, document_id: &str) -> Result<Option<TaxDocument>>;
     fn get_tax_document_content(&self, document_id: &str) -> Result<Option<Vec<u8>>>;
+    async fn delete_tax_document(&self, document_id: &str) -> Result<()>;
     async fn create_tax_document_extraction(
         &self,
         request: TaxDocumentExtractionRequest,
@@ -79,6 +82,8 @@ pub trait TaxRepositoryTrait: Send + Sync {
         &self,
         update: TaxReconciliationEntryUpdate,
     ) -> Result<TaxReconciliationEntry>;
+
+    async fn update_tax_event(&self, update: TaxEventUpdate) -> Result<TaxEvent>;
 
     fn list_tax_events(&self, report_id: &str) -> Result<Vec<TaxEvent>>;
     fn list_tax_issues(&self, report_id: &str) -> Result<Vec<TaxIssue>>;
@@ -106,12 +111,15 @@ pub trait TaxServiceTrait: Send + Sync {
     fn get_tax_report_detail(&self, id: &str) -> Result<Option<TaxReportDetail>>;
     async fn regenerate_tax_year_report(&self, id: &str) -> Result<TaxReportDetail>;
     async fn finalize_tax_year_report(&self, id: &str) -> Result<TaxYearReport>;
+    async fn amend_tax_year_report(&self, id: &str) -> Result<TaxYearReport>;
 
     async fn upload_tax_document(
         &self,
         upload: crate::tax::TaxDocumentUpload,
     ) -> Result<TaxDocument>;
     fn list_tax_documents(&self, report_id: &str) -> Result<Vec<TaxDocument>>;
+    async fn delete_tax_document(&self, document_id: &str) -> Result<()>;
+    fn get_tax_document_download(&self, document_id: &str) -> Result<Option<TaxDocumentDownload>>;
     async fn extract_tax_document(
         &self,
         request: TaxDocumentExtractionRequest,
@@ -125,4 +133,5 @@ pub trait TaxServiceTrait: Send + Sync {
         &self,
         update: TaxReconciliationEntryUpdate,
     ) -> Result<TaxReconciliationEntry>;
+    async fn update_tax_event(&self, update: TaxEventUpdate) -> Result<TaxEvent>;
 }

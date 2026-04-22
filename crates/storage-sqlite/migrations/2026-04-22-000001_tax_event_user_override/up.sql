@@ -1,0 +1,1 @@
+ALTER TABLE tax_events ADD COLUMN user_override INTEGER NOT NULL DEFAULT 0;

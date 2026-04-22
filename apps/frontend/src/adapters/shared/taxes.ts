@@ -5,9 +5,12 @@ import type {
   ExtractedTaxFieldUpdate,
   NewTaxYearReport,
   TaxDocument,
+  TaxDocumentDownload,
   TaxDocumentExtractionRequest,
   TaxDocumentExtractionResult,
   TaxDocumentUpload,
+  TaxEvent,
+  TaxEventUpdate,
   TaxProfile,
   TaxProfileUpdate,
   TaxReconciliationEntry,
@@ -60,12 +63,39 @@ export const finalizeTaxYearReport = async (id: string): Promise<TaxYearReport> 
   return invoke<TaxYearReport>("finalize_tax_year_report", { id });
 };
 
+export const amendTaxYearReport = async (id: string): Promise<TaxYearReport> => {
+  return invoke<TaxYearReport>("amend_tax_year_report", { id });
+};
+
 export const uploadTaxDocument = async (upload: TaxDocumentUpload): Promise<TaxDocument> => {
   return invoke<TaxDocument>("upload_tax_document", { upload });
 };
 
 export const listTaxDocuments = async (reportId: string): Promise<TaxDocument[]> => {
   return invoke<TaxDocument[]>("list_tax_documents", { reportId });
+};
+
+export const deleteTaxDocument = async (documentId: string): Promise<void> => {
+  await invoke<void>("delete_tax_document", { documentId });
+};
+
+interface TaxDocumentDownloadPayload {
+  filename: string;
+  mimeType?: string | null;
+  content?: number[] | Uint8Array;
+}
+
+export const downloadTaxDocument = async (documentId: string): Promise<TaxDocumentDownload> => {
+  const payload = await invoke<TaxDocumentDownloadPayload>("get_tax_document_download", {
+    documentId,
+  });
+  const rawContent = payload.content ?? [];
+  const content = rawContent instanceof Uint8Array ? rawContent : Uint8Array.from(rawContent);
+  return {
+    filename: payload.filename,
+    mimeType: payload.mimeType ?? null,
+    content,
+  };
 };
 
 export const extractTaxDocument = async (
@@ -80,9 +110,7 @@ export const updateExtractedTaxField = async (
   return invoke<ExtractedTaxField>("update_extracted_tax_field", { update });
 };
 
-export const reconcileTaxYearReport = async (
-  id: string,
-): Promise<TaxReconciliationEntry[]> => {
+export const reconcileTaxYearReport = async (id: string): Promise<TaxReconciliationEntry[]> => {
   return invoke<TaxReconciliationEntry[]>("reconcile_tax_year_report", { id });
 };
 
@@ -90,4 +118,8 @@ export const updateTaxReconciliationEntry = async (
   update: TaxReconciliationEntryUpdate,
 ): Promise<TaxReconciliationEntry> => {
   return invoke<TaxReconciliationEntry>("update_tax_reconciliation_entry", { update });
+};
+
+export const updateTaxEvent = async (update: TaxEventUpdate): Promise<TaxEvent> => {
+  return invoke<TaxEvent>("update_tax_event", { update });
 };

@@ -149,8 +149,16 @@ export interface TaxEvent {
   confidence: TaxConfidence;
   included: boolean;
   notes?: string | null;
+  userOverride: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TaxEventUpdate {
+  id: string;
+  included: boolean;
+  taxableAmountEur?: string | number | null;
+  notes?: string | null;
 }
 
 export interface TaxIssue {
@@ -185,6 +193,12 @@ export interface TaxDocumentUpload {
   filename: string;
   mimeType?: string | null;
   content: number[];
+}
+
+export interface TaxDocumentDownload {
+  filename: string;
+  mimeType?: string | null;
+  content: Uint8Array;
 }
 
 export interface TaxDocumentExtraction {

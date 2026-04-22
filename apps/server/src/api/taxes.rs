@@ -1,16 +1,21 @@
 use std::sync::Arc;
 
-use crate::{error::ApiResult, main_lib::AppState};
+use crate::{
+    error::{ApiError, ApiResult},
+    main_lib::AppState,
+};
 use axum::{
     extract::{Path, State},
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use serde::Serialize;
 use wealthfolio_core::tax::{
     AccountTaxProfile, AccountTaxProfileUpdate, ExtractedTaxField, ExtractedTaxFieldUpdate,
     NewTaxYearReport, TaxDocument, TaxDocumentExtractionRequest, TaxDocumentExtractionResult,
-    TaxDocumentUpload, TaxProfile, TaxProfileUpdate, TaxReconciliationEntry,
-    TaxReconciliationEntryUpdate, TaxReportDetail, TaxYearReport,
+    TaxDocumentUpload, TaxEvent, TaxEventUpdate, TaxProfile, TaxProfileUpdate,
+    TaxReconciliationEntry, TaxReconciliationEntryUpdate, TaxReportDetail, TaxYearReport,
 };
 
 async fn get_tax_profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<TaxProfile>> {
@@ -91,6 +96,14 @@ async fn finalize_tax_year_report(
     Ok(Json(report))
 }
 
+async fn amend_tax_year_report(
+    Path(id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Json<TaxYearReport>> {
+    let report = state.tax_service.amend_tax_year_report(&id).await?;
+    Ok(Json(report))
+}
+
 async fn upload_tax_document(
     State(state): State<Arc<AppState>>,
     Json(upload): Json<TaxDocumentUpload>,
@@ -105,6 +118,37 @@ async fn list_tax_documents(
 ) -> ApiResult<Json<Vec<TaxDocument>>> {
     let documents = state.tax_service.list_tax_documents(&report_id)?;
     Ok(Json(documents))
+}
+
+async fn delete_tax_document(
+    Path(document_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Json<()>> {
+    state.tax_service.delete_tax_document(&document_id).await?;
+    Ok(Json(()))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaxDocumentDownloadResponse {
+    filename: String,
+    mime_type: Option<String>,
+    content_b64: String,
+}
+
+async fn download_tax_document(
+    Path(document_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Json<TaxDocumentDownloadResponse>> {
+    let download = state
+        .tax_service
+        .get_tax_document_download(&document_id)?
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(TaxDocumentDownloadResponse {
+        filename: download.filename,
+        mime_type: download.mime_type,
+        content_b64: BASE64.encode(&download.content),
+    }))
 }
 
 async fn extract_tax_document(
@@ -142,6 +186,14 @@ async fn update_tax_reconciliation_entry(
     Ok(Json(entry))
 }
 
+async fn update_tax_event(
+    State(state): State<Arc<AppState>>,
+    Json(update): Json<TaxEventUpdate>,
+) -> ApiResult<Json<TaxEvent>> {
+    let event = state.tax_service.update_tax_event(update).await?;
+    Ok(Json(event))
+}
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
@@ -166,16 +218,20 @@ pub fn router() -> Router<Arc<AppState>> {
             "/taxes/reports/{id}/finalize",
             post(finalize_tax_year_report),
         )
+        .route("/taxes/reports/{id}/amend", post(amend_tax_year_report))
         .route("/taxes/reports/{id}/documents", get(list_tax_documents))
         .route(
             "/taxes/reports/{id}/reconcile",
             post(reconcile_tax_year_report),
         )
         .route("/taxes/documents", post(upload_tax_document))
+        .route("/taxes/documents/{id}", delete(delete_tax_document))
+        .route("/taxes/documents/{id}/download", get(download_tax_document))
         .route("/taxes/documents/extract", post(extract_tax_document))
         .route("/taxes/extracted-fields", post(update_extracted_tax_field))
         .route(
             "/taxes/reconciliation",
             post(update_tax_reconciliation_entry),
         )
+        .route("/taxes/events", post(update_tax_event))
 }

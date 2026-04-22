@@ -3,15 +3,17 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use diesel::prelude::*;
 use diesel::r2d2::{self, Pool};
 use diesel::SqliteConnection;
+use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 use wealthfolio_device_sync::crypto::{decrypt, encrypt, sha256_checksum};
 
+use wealthfolio_core::errors::DatabaseError;
 use wealthfolio_core::tax::{
     AccountTaxProfile, AccountTaxProfileUpdate, CompiledTaxEvent, ExtractedTaxField,
     ExtractedTaxFieldUpdate, NewExtractedTaxField, NewTaxIssue, NewTaxReconciliationEntry,
     NewTaxYearReport, TaxDocument, TaxDocumentExtractionRequest, TaxDocumentExtractionResult,
-    TaxEvent, TaxIssue, TaxProfile, TaxProfileUpdate, TaxReconciliationEntry,
+    TaxEvent, TaxEventUpdate, TaxIssue, TaxProfile, TaxProfileUpdate, TaxReconciliationEntry,
     TaxReconciliationEntryUpdate, TaxReportDetail, TaxReportStatus, TaxRepositoryTrait,
     TaxYearReport,
 };
@@ -333,6 +335,36 @@ impl TaxRepositoryTrait for TaxRepository {
             .await
     }
 
+    async fn create_amended_report(&self, parent: TaxYearReport) -> Result<TaxYearReport> {
+        self.writer
+            .exec_tx(move |tx| -> Result<TaxYearReport> {
+                let now = chrono::Utc::now().naive_utc();
+                let report_db = TaxYearReportDB {
+                    id: Uuid::new_v4().to_string(),
+                    tax_year: parent.tax_year,
+                    jurisdiction: parent.jurisdiction,
+                    status: TaxReportStatus::AmendedDraft.as_str().to_string(),
+                    rule_pack_version: parent.rule_pack_version,
+                    base_currency: parent.base_currency,
+                    generated_at: None,
+                    finalized_at: None,
+                    assumptions_json: "{}".to_string(),
+                    summary_json: "{}".to_string(),
+                    parent_report_id: Some(parent.id),
+                    created_at: now,
+                    updated_at: now,
+                };
+
+                diesel::insert_into(tax_year_reports::table)
+                    .values(&report_db)
+                    .execute(tx.conn())
+                    .map_err(StorageError::from)?;
+
+                Ok(TaxYearReport::from(report_db))
+            })
+            .await
+    }
+
     async fn replace_generated_report_data(
         &self,
         report_id: &str,
@@ -344,6 +376,24 @@ impl TaxRepositoryTrait for TaxRepository {
         let report_id = report_id.to_string();
         self.writer
             .exec_tx(move |tx| -> Result<TaxReportDetail> {
+                let overrides: HashMap<(String, String), (i32, Option<String>, Option<String>)> =
+                    tax_events::table
+                        .select(TaxEventDB::as_select())
+                        .filter(tax_events::report_id.eq(&report_id))
+                        .filter(tax_events::user_override.eq(1))
+                        .load::<TaxEventDB>(tx.conn())
+                        .map_err(StorageError::from)?
+                        .into_iter()
+                        .filter_map(|e| {
+                            e.activity_id.map(|aid| {
+                                (
+                                    (aid, e.event_type),
+                                    (e.included, e.taxable_amount_eur, e.notes),
+                                )
+                            })
+                        })
+                        .collect();
+
                 diesel::delete(
                     tax_reconciliation_entries::table
                         .filter(tax_reconciliation_entries::report_id.eq(&report_id)),
@@ -360,10 +410,11 @@ impl TaxRepositoryTrait for TaxRepository {
                 let now = chrono::Utc::now().naive_utc();
                 for compiled in events {
                     let event_id = Uuid::new_v4().to_string();
+                    let event_type_str = compiled.event.event_type.as_str().to_string();
                     let event_db = TaxEventDB {
                         id: event_id.clone(),
                         report_id: report_id.clone(),
-                        event_type: compiled.event.event_type.as_str().to_string(),
+                        event_type: event_type_str.clone(),
                         category: compiled.event.category,
                         suggested_box: compiled.event.suggested_box,
                         account_id: compiled.event.account_id,
@@ -378,6 +429,7 @@ impl TaxRepositoryTrait for TaxRepository {
                         confidence: compiled.event.confidence.as_str().to_string(),
                         included: if compiled.event.included { 1 } else { 0 },
                         notes: compiled.event.notes,
+                        user_override: 0,
                         created_at: now,
                         updated_at: now,
                     };
@@ -385,6 +437,23 @@ impl TaxRepositoryTrait for TaxRepository {
                         .values(&event_db)
                         .execute(tx.conn())
                         .map_err(StorageError::from)?;
+
+                    if let Some(ref activity_id) = event_db.activity_id {
+                        if let Some((incl, tax_amt, notes)) =
+                            overrides.get(&(activity_id.clone(), event_type_str))
+                        {
+                            diesel::update(tax_events::table.find(&event_id))
+                                .set((
+                                    tax_events::included.eq(incl),
+                                    tax_events::taxable_amount_eur.eq(tax_amt),
+                                    tax_events::notes.eq(notes),
+                                    tax_events::user_override.eq(1),
+                                    tax_events::updated_at.eq(now),
+                                ))
+                                .execute(tx.conn())
+                                .map_err(StorageError::from)?;
+                        }
+                    }
 
                     let source_rows = compiled
                         .sources
@@ -562,6 +631,17 @@ impl TaxRepositoryTrait for TaxRepository {
         Ok(rows.into_iter().map(TaxDocument::from).collect())
     }
 
+    fn get_tax_document(&self, document_id: &str) -> Result<Option<TaxDocument>> {
+        let mut conn = get_connection(&self.pool)?;
+        let row = tax_documents::table
+            .select(TaxDocumentDB::as_select())
+            .find(document_id)
+            .first::<TaxDocumentDB>(&mut conn)
+            .optional()
+            .map_err(StorageError::from)?;
+        Ok(row.map(TaxDocument::from))
+    }
+
     fn get_tax_document_content(&self, document_id: &str) -> Result<Option<Vec<u8>>> {
         let mut conn = get_connection(&self.pool)?;
         let row = tax_documents::table
@@ -579,6 +659,23 @@ impl TaxRepositoryTrait for TaxRepository {
                 .map_err(|error| Error::Unexpected(error.to_string()))
         })
         .transpose()
+    }
+
+    async fn delete_tax_document(&self, document_id: &str) -> Result<()> {
+        let document_id = document_id.to_string();
+        self.writer
+            .exec_tx(move |tx| -> Result<()> {
+                let affected = diesel::delete(tax_documents::table.find(&document_id))
+                    .execute(tx.conn())
+                    .map_err(StorageError::from)?;
+                if affected == 0 {
+                    return Err(Error::Database(DatabaseError::NotFound(format!(
+                        "Tax document {document_id} not found"
+                    ))));
+                }
+                Ok(())
+            })
+            .await
     }
 
     async fn create_tax_document_extraction(
@@ -723,6 +820,31 @@ impl TaxRepositoryTrait for TaxRepository {
                     .first::<TaxReconciliationEntryDB>(tx.conn())
                     .map_err(StorageError::from)?;
                 Ok(TaxReconciliationEntry::from(entry))
+            })
+            .await
+    }
+
+    async fn update_tax_event(&self, update: TaxEventUpdate) -> Result<TaxEvent> {
+        self.writer
+            .exec_tx(move |tx| -> Result<TaxEvent> {
+                let now = chrono::Utc::now().naive_utc();
+                diesel::update(tax_events::table.find(&update.id))
+                    .set((
+                        tax_events::included.eq(if update.included { 1 } else { 0 }),
+                        tax_events::taxable_amount_eur.eq(decimal_to_db(update.taxable_amount_eur)),
+                        tax_events::notes.eq(update.notes),
+                        tax_events::user_override.eq(1),
+                        tax_events::updated_at.eq(now),
+                    ))
+                    .execute(tx.conn())
+                    .map_err(StorageError::from)?;
+
+                let event = tax_events::table
+                    .select(TaxEventDB::as_select())
+                    .find(&update.id)
+                    .first::<TaxEventDB>(tx.conn())
+                    .map_err(StorageError::from)?;
+                Ok(TaxEvent::from(event))
             })
             .await
     }

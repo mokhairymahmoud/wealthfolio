@@ -14,10 +14,11 @@ use crate::tax::{
     AccountTaxProfile, AccountTaxProfileUpdate, CompiledTaxEvent, ExtractedTaxField,
     ExtractedTaxFieldUpdate, NewExtractedTaxField, NewTaxEvent, NewTaxEventSource, NewTaxIssue,
     NewTaxLotAllocation, NewTaxReconciliationEntry, NewTaxYearReport, TaxConfidence, TaxDocument,
-    TaxDocumentExtractionRequest, TaxDocumentExtractionResult, TaxDocumentUpload, TaxEventType,
-    TaxProfile, TaxProfileUpdate, TaxReconciliationEntry, TaxReconciliationEntryUpdate,
-    TaxReportDetail, TaxReportStatus, TaxRepositoryTrait, TaxServiceTrait, TaxYearReport,
-    DEFAULT_TAX_JURISDICTION, DEFAULT_TAX_REGIME,
+    TaxDocumentDownload, TaxDocumentExtractionRequest, TaxDocumentExtractionResult,
+    TaxDocumentUpload, TaxEvent, TaxEventType, TaxEventUpdate, TaxProfile, TaxProfileUpdate,
+    TaxReconciliationEntry, TaxReconciliationEntryUpdate, TaxReportDetail, TaxReportStatus,
+    TaxRepositoryTrait, TaxServiceTrait, TaxYearReport, DEFAULT_TAX_JURISDICTION,
+    DEFAULT_TAX_REGIME,
 };
 
 const TAX_REGIME_CTO: &str = "CTO";
@@ -648,6 +649,17 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         self.repository.finalize_tax_year_report(id).await
     }
 
+    async fn amend_tax_year_report(&self, id: &str) -> Result<TaxYearReport> {
+        let parent = self
+            .repository
+            .get_tax_year_report(id)?
+            .ok_or_else(|| Self::not_found(format!("Tax report {id} not found")))?;
+        if parent.status != TaxReportStatus::Finalized {
+            return Err(Self::not_found("Only finalized tax reports can be amended"));
+        }
+        self.repository.create_amended_report(parent).await
+    }
+
     async fn upload_tax_document(&self, upload: TaxDocumentUpload) -> Result<TaxDocument> {
         if upload.content.is_empty() {
             return Err(Error::Validation(ValidationError::MissingField(
@@ -667,6 +679,41 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
 
     fn list_tax_documents(&self, report_id: &str) -> Result<Vec<TaxDocument>> {
         self.repository.list_tax_documents(report_id)
+    }
+
+    async fn delete_tax_document(&self, document_id: &str) -> Result<()> {
+        let document = self
+            .repository
+            .get_tax_document(document_id)?
+            .ok_or_else(|| Self::not_found(format!("Tax document {document_id} not found")))?;
+        let report = self
+            .repository
+            .get_tax_year_report(&document.report_id)?
+            .ok_or_else(|| {
+                Self::not_found(format!("Tax report {} not found", document.report_id))
+            })?;
+        if report.status == TaxReportStatus::Finalized {
+            return Err(Self::not_found(
+                "Documents on finalized tax reports cannot be deleted",
+            ));
+        }
+        self.repository.delete_tax_document(document_id).await
+    }
+
+    fn get_tax_document_download(&self, document_id: &str) -> Result<Option<TaxDocumentDownload>> {
+        let document = match self.repository.get_tax_document(document_id)? {
+            Some(document) => document,
+            None => return Ok(None),
+        };
+        let content = self
+            .repository
+            .get_tax_document_content(document_id)?
+            .ok_or_else(|| Self::not_found(format!("Tax document {document_id} not found")))?;
+        Ok(Some(TaxDocumentDownload {
+            filename: document.filename,
+            mime_type: document.mime_type,
+            content,
+        }))
     }
 
     async fn extract_tax_document(
@@ -739,5 +786,9 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         self.repository
             .update_tax_reconciliation_entry(update)
             .await
+    }
+
+    async fn update_tax_event(&self, update: TaxEventUpdate) -> Result<TaxEvent> {
+        self.repository.update_tax_event(update).await
     }
 }
