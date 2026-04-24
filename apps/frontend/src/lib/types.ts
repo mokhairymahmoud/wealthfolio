@@ -188,6 +188,7 @@ export interface TaxIssue {
   severity: string;
   code: string;
   message: string;
+  documentId?: string | null;
   accountId?: string | null;
   activityId?: string | null;
   taxEventId?: string | null;

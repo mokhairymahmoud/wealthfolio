@@ -290,6 +290,7 @@ pub struct TaxIssue {
     pub severity: String,
     pub code: String,
     pub message: String,
+    pub document_id: Option<String>,
     pub account_id: Option<String>,
     pub activity_id: Option<String>,
     pub tax_event_id: Option<String>,
@@ -303,6 +304,7 @@ pub struct NewTaxIssue {
     pub severity: String,
     pub code: String,
     pub message: String,
+    pub document_id: Option<String>,
     pub account_id: Option<String>,
     pub activity_id: Option<String>,
 }

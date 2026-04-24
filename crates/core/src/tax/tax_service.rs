@@ -200,6 +200,7 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                 code: "NO_CTO_ACCOUNTS".to_string(),
                 message: "No securities account is marked as CTO for this French tax report."
                     .to_string(),
+                document_id: None,
                 account_id: None,
                 activity_id: None,
             });
@@ -276,6 +277,7 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     "Missing FX rate for acquisition activity {} in {}.",
                     activity.id, activity.currency
                 ),
+                document_id: None,
                 account_id: Some(activity.account_id.clone()),
                 activity_id: Some(activity.id.clone()),
             });
@@ -310,6 +312,7 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     "Missing FX rate for income activity {} in {}.",
                     activity.id, activity.currency
                 ),
+                document_id: None,
                 account_id: Some(activity.account_id.clone()),
                 activity_id: Some(activity.id.clone()),
             });
@@ -443,6 +446,7 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     "Missing FX rate for disposal activity {} in {}.",
                     activity.id, activity.currency
                 ),
+                document_id: None,
                 account_id: Some(activity.account_id.clone()),
                 activity_id: Some(activity.id.clone()),
             });
@@ -457,6 +461,7 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     "Missing cost basis for {} units sold in activity {}.",
                     remaining, activity.id
                 ),
+                document_id: None,
                 account_id: Some(activity.account_id.clone()),
                 activity_id: Some(activity.id.clone()),
             });
@@ -663,6 +668,7 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     "No tax fields were extracted from {} using {}. Review the document manually or retry extraction.",
                     document.filename, method
                 ),
+                document_id: Some(document.id.clone()),
                 account_id: None,
                 activity_id: None,
             }];
@@ -679,12 +685,28 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     "Extracted values from {} using {} are low confidence and should be reviewed before reconciliation.",
                     document.filename, method
                 ),
+                document_id: Some(document.id.clone()),
                 account_id: None,
                 activity_id: None,
             }];
         }
 
         Vec::new()
+    }
+
+    fn extraction_status(fields: &[NewExtractedTaxField]) -> &'static str {
+        if fields.is_empty() {
+            return "NO_FIELDS_FOUND";
+        }
+
+        if fields
+            .iter()
+            .all(|field| field.confidence < EXTRACTION_CONFIDENCE_WARNING_THRESHOLD)
+        {
+            return "LOW_CONFIDENCE";
+        }
+
+        "READY_FOR_REVIEW"
     }
 }
 
@@ -909,13 +931,14 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         let fields = Self::parse_ifu_fields(&preview);
         let extraction_issues =
             Self::build_extraction_issues(&document, &normalized_method, &fields);
+        let extraction_status = Self::extraction_status(&fields).to_string();
         let request = TaxDocumentExtractionRequest {
             method: normalized_method,
             ..request
         };
         let extraction = self
             .repository
-            .create_tax_document_extraction(request, Some(preview), fields)
+            .create_tax_document_extraction(request, extraction_status, Some(preview), fields)
             .await?;
         self.repository
             .replace_tax_issues_by_code(
@@ -1449,6 +1472,7 @@ mod tests {
         async fn create_tax_document_extraction(
             &self,
             _request: TaxDocumentExtractionRequest,
+            _status: String,
             _raw_text_preview: Option<String>,
             _fields: Vec<crate::tax::NewExtractedTaxField>,
         ) -> Result<TaxDocumentExtractionResult> {
@@ -1474,6 +1498,7 @@ mod tests {
                     severity: issue.severity,
                     code: issue.code,
                     message: issue.message,
+                    document_id: issue.document_id,
                     account_id: issue.account_id,
                     activity_id: issue.activity_id,
                     tax_event_id: None,
@@ -1618,6 +1643,7 @@ mod tests {
             severity: severity.to_string(),
             code: "TEST".to_string(),
             message: "test issue".to_string(),
+            document_id: None,
             account_id: None,
             activity_id: None,
             tax_event_id: None,
@@ -1908,6 +1934,14 @@ mod tests {
     }
 
     #[test]
+    fn extraction_status_marks_empty_extractions() {
+        assert_eq!(
+            TaxService::<MockTaxRepository>::extraction_status(&[]),
+            "NO_FIELDS_FOUND"
+        );
+    }
+
+    #[test]
     fn build_extraction_issues_warns_when_all_fields_are_low_confidence() {
         let document = make_document("report-1");
         let issues = TaxService::<MockTaxRepository>::build_extraction_issues(
@@ -1931,5 +1965,43 @@ mod tests {
         assert!(issues[0]
             .code
             .starts_with("DOCUMENT_EXTRACTION_LOW_CONFIDENCE:"));
+    }
+
+    #[test]
+    fn extraction_status_marks_low_confidence_results() {
+        assert_eq!(
+            TaxService::<MockTaxRepository>::extraction_status(&[NewExtractedTaxField {
+                field_key: CATEGORY_DIVIDENDS.to_string(),
+                label: "Dividends".to_string(),
+                mapped_category: Some(CATEGORY_DIVIDENDS.to_string()),
+                suggested_declaration_box: Some("2042-2DC".to_string()),
+                source_locator_json: None,
+                value_text: Some("Dividends 10".to_string()),
+                amount_eur: Some(Decimal::from(10u32)),
+                confidence: 0.55,
+                status: "SUGGESTED".to_string(),
+                confirmed_amount_eur: None,
+            }]),
+            "LOW_CONFIDENCE"
+        );
+    }
+
+    #[test]
+    fn extraction_status_marks_review_ready_results() {
+        assert_eq!(
+            TaxService::<MockTaxRepository>::extraction_status(&[NewExtractedTaxField {
+                field_key: CATEGORY_DIVIDENDS.to_string(),
+                label: "Dividends".to_string(),
+                mapped_category: Some(CATEGORY_DIVIDENDS.to_string()),
+                suggested_declaration_box: Some("2042-2DC".to_string()),
+                source_locator_json: None,
+                value_text: Some("Dividends 10".to_string()),
+                amount_eur: Some(Decimal::from(10u32)),
+                confidence: 0.9,
+                status: "SUGGESTED".to_string(),
+                confirmed_amount_eur: None,
+            }]),
+            "READY_FOR_REVIEW"
+        );
     }
 }

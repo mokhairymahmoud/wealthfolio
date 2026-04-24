@@ -734,6 +734,13 @@ export default function TaxesPage() {
     }
     return byDocument;
   }, [reportDetail]);
+  const documentNameById = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const document of reportDetail?.documents ?? []) {
+      byId.set(document.id, document.filename);
+    }
+    return byId;
+  }, [reportDetail]);
   const extractionActionsDisabled =
     isReportLocked ||
     confirmFieldMutation.isPending ||
@@ -964,7 +971,9 @@ export default function TaxesPage() {
                       {latestExtractionByDocument.get(document.id) && (
                         <div className="text-muted-foreground mt-1 text-xs">
                           Latest extraction: {latestExtractionByDocument.get(document.id)?.extraction.method} ·{" "}
-                          {latestExtractionByDocument.get(document.id)?.extraction.status}
+                          <span className="font-medium">
+                            {latestExtractionByDocument.get(document.id)?.extraction.status}
+                          </span>
                         </div>
                       )}
                     </div>
@@ -1084,6 +1093,11 @@ export default function TaxesPage() {
                     <span className="font-medium">{issue.code}</span>
                   </div>
                   <p className="text-muted-foreground mt-1">{issue.message}</p>
+                  {issue.documentId && (
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      Document {documentNameById.get(issue.documentId) ?? issue.documentId}
+                    </p>
+                  )}
                 </div>
               ))}
               {(reportDetail?.issues ?? []).length === 0 && (

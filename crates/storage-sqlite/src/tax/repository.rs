@@ -602,6 +602,7 @@ impl TaxRepositoryTrait for TaxRepository {
                         severity: issue.severity,
                         code: issue.code,
                         message: issue.message,
+                        document_id: issue.document_id,
                         account_id: issue.account_id,
                         activity_id: issue.activity_id,
                         tax_event_id: None,
@@ -831,6 +832,7 @@ impl TaxRepositoryTrait for TaxRepository {
     async fn create_tax_document_extraction(
         &self,
         request: TaxDocumentExtractionRequest,
+        status: String,
         raw_text_preview: Option<String>,
         fields: Vec<NewExtractedTaxField>,
     ) -> Result<TaxDocumentExtractionResult> {
@@ -841,7 +843,7 @@ impl TaxRepositoryTrait for TaxRepository {
                     id: Uuid::new_v4().to_string(),
                     document_id: request.document_id,
                     method: request.method,
-                    status: "READY_FOR_REVIEW".to_string(),
+                    status,
                     consent_granted: if request.consent_granted { 1 } else { 0 },
                     raw_text_preview,
                     created_at: now,
@@ -903,6 +905,7 @@ impl TaxRepositoryTrait for TaxRepository {
                         severity: issue.severity,
                         code: issue.code,
                         message: issue.message,
+                        document_id: issue.document_id,
                         account_id: issue.account_id,
                         activity_id: issue.activity_id,
                         tax_event_id: None,

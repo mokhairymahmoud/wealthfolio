@@ -536,6 +536,7 @@ diesel::table! {
         account_id -> Nullable<Text>,
         activity_id -> Nullable<Text>,
         tax_event_id -> Nullable<Text>,
+        document_id -> Nullable<Text>,
         resolved_at -> Nullable<Timestamp>,
         created_at -> Timestamp,
     }

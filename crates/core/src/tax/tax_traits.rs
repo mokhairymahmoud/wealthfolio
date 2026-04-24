@@ -67,6 +67,7 @@ pub trait TaxRepositoryTrait: Send + Sync {
     async fn create_tax_document_extraction(
         &self,
         request: TaxDocumentExtractionRequest,
+        status: String,
         raw_text_preview: Option<String>,
         fields: Vec<crate::tax::NewExtractedTaxField>,
     ) -> Result<TaxDocumentExtractionResult>;
