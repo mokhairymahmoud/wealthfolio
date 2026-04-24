@@ -875,6 +875,54 @@ impl TaxRepositoryTrait for TaxRepository {
             .await
     }
 
+    async fn replace_tax_issues_by_code(
+        &self,
+        report_id: &str,
+        issue_codes: Vec<String>,
+        issues: Vec<NewTaxIssue>,
+    ) -> Result<Vec<TaxIssue>> {
+        let report_id = report_id.to_string();
+        self.writer
+            .exec_tx(move |tx| -> Result<Vec<TaxIssue>> {
+                if !issue_codes.is_empty() {
+                    diesel::delete(
+                        tax_issues::table
+                            .filter(tax_issues::report_id.eq(&report_id))
+                            .filter(tax_issues::code.eq_any(&issue_codes)),
+                    )
+                    .execute(tx.conn())
+                    .map_err(StorageError::from)?;
+                }
+
+                let now = chrono::Utc::now().naive_utc();
+                let rows = issues
+                    .into_iter()
+                    .map(|issue| TaxIssueDB {
+                        id: Uuid::new_v4().to_string(),
+                        report_id: report_id.clone(),
+                        severity: issue.severity,
+                        code: issue.code,
+                        message: issue.message,
+                        account_id: issue.account_id,
+                        activity_id: issue.activity_id,
+                        tax_event_id: None,
+                        resolved_at: None,
+                        created_at: now,
+                    })
+                    .collect::<Vec<_>>();
+
+                if !rows.is_empty() {
+                    diesel::insert_into(tax_issues::table)
+                        .values(&rows)
+                        .execute(tx.conn())
+                        .map_err(StorageError::from)?;
+                }
+
+                Ok(rows.into_iter().map(TaxIssue::from).collect())
+            })
+            .await
+    }
+
     fn list_tax_document_extractions(
         &self,
         report_id: &str,

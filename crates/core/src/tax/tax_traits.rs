@@ -70,6 +70,12 @@ pub trait TaxRepositoryTrait: Send + Sync {
         raw_text_preview: Option<String>,
         fields: Vec<crate::tax::NewExtractedTaxField>,
     ) -> Result<TaxDocumentExtractionResult>;
+    async fn replace_tax_issues_by_code(
+        &self,
+        report_id: &str,
+        issue_codes: Vec<String>,
+        issues: Vec<NewTaxIssue>,
+    ) -> Result<Vec<TaxIssue>>;
     fn list_tax_document_extractions(
         &self,
         report_id: &str,

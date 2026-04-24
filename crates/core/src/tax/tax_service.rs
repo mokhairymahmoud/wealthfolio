@@ -26,6 +26,7 @@ const CATEGORY_DIVIDENDS: &str = "DIVIDENDS";
 const CATEGORY_INTEREST: &str = "INTEREST";
 const CATEGORY_SECURITY_GAINS: &str = "SECURITY_GAINS";
 const CATEGORY_FEES: &str = "FEES";
+const EXTRACTION_CONFIDENCE_WARNING_THRESHOLD: f64 = 0.7;
 
 #[derive(Debug, Clone)]
 struct TaxLot {
@@ -641,6 +642,50 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
             .filter_map(|part| part.parse::<Decimal>().ok())
             .next_back()
     }
+
+    fn extraction_issue_codes(document_id: &str) -> Vec<String> {
+        vec![
+            format!("DOCUMENT_EXTRACTION_EMPTY:{document_id}"),
+            format!("DOCUMENT_EXTRACTION_LOW_CONFIDENCE:{document_id}"),
+        ]
+    }
+
+    fn build_extraction_issues(
+        document: &TaxDocument,
+        method: &str,
+        fields: &[NewExtractedTaxField],
+    ) -> Vec<NewTaxIssue> {
+        if fields.is_empty() {
+            return vec![NewTaxIssue {
+                severity: "WARNING".to_string(),
+                code: format!("DOCUMENT_EXTRACTION_EMPTY:{}", document.id),
+                message: format!(
+                    "No tax fields were extracted from {} using {}. Review the document manually or retry extraction.",
+                    document.filename, method
+                ),
+                account_id: None,
+                activity_id: None,
+            }];
+        }
+
+        if fields
+            .iter()
+            .all(|field| field.confidence < EXTRACTION_CONFIDENCE_WARNING_THRESHOLD)
+        {
+            return vec![NewTaxIssue {
+                severity: "WARNING".to_string(),
+                code: format!("DOCUMENT_EXTRACTION_LOW_CONFIDENCE:{}", document.id),
+                message: format!(
+                    "Extracted values from {} using {} are low confidence and should be reviewed before reconciliation.",
+                    document.filename, method
+                ),
+                account_id: None,
+                activity_id: None,
+            }];
+        }
+
+        Vec::new()
+    }
 }
 
 #[async_trait]
@@ -862,13 +907,24 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         )?;
         let preview: String = text.chars().take(4000).collect();
         let fields = Self::parse_ifu_fields(&preview);
+        let extraction_issues =
+            Self::build_extraction_issues(&document, &normalized_method, &fields);
         let request = TaxDocumentExtractionRequest {
             method: normalized_method,
             ..request
         };
-        self.repository
+        let extraction = self
+            .repository
             .create_tax_document_extraction(request, Some(preview), fields)
-            .await
+            .await?;
+        self.repository
+            .replace_tax_issues_by_code(
+                &document.report_id,
+                Self::extraction_issue_codes(&document.id),
+                extraction_issues,
+            )
+            .await?;
+        Ok(extraction)
     }
 
     async fn update_extracted_tax_field(
@@ -1399,6 +1455,36 @@ mod tests {
             panic!("create_tax_document_extraction should not be called in these tests")
         }
 
+        async fn replace_tax_issues_by_code(
+            &self,
+            report_id: &str,
+            issue_codes: Vec<String>,
+            issues: Vec<NewTaxIssue>,
+        ) -> Result<Vec<TaxIssue>> {
+            let mut issues_by_report = self.issues_by_report.write().unwrap();
+            let existing = issues_by_report.entry(report_id.to_string()).or_default();
+            existing.retain(|issue| !issue_codes.contains(&issue.code));
+
+            let now = Utc::now().naive_utc();
+            let new_rows = issues
+                .into_iter()
+                .map(|issue| TaxIssue {
+                    id: format!("issue-{}", issue.code),
+                    report_id: report_id.to_string(),
+                    severity: issue.severity,
+                    code: issue.code,
+                    message: issue.message,
+                    account_id: issue.account_id,
+                    activity_id: issue.activity_id,
+                    tax_event_id: None,
+                    resolved_at: None,
+                    created_at: now,
+                })
+                .collect::<Vec<_>>();
+            existing.extend(new_rows.clone());
+            Ok(new_rows)
+        }
+
         fn list_tax_document_extractions(
             &self,
             _report_id: &str,
@@ -1808,5 +1894,42 @@ mod tests {
 
         assert!(text.contains("Dividends 123.45"));
         assert!(text.contains("Interest 67.89"));
+    }
+
+    #[test]
+    fn build_extraction_issues_warns_when_no_fields_are_found() {
+        let document = make_document("report-1");
+        let issues =
+            TaxService::<MockTaxRepository>::build_extraction_issues(&document, "LOCAL_TEXT", &[]);
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, "WARNING");
+        assert!(issues[0].code.starts_with("DOCUMENT_EXTRACTION_EMPTY:"));
+    }
+
+    #[test]
+    fn build_extraction_issues_warns_when_all_fields_are_low_confidence() {
+        let document = make_document("report-1");
+        let issues = TaxService::<MockTaxRepository>::build_extraction_issues(
+            &document,
+            "LOCAL_TEXT",
+            &[NewExtractedTaxField {
+                field_key: CATEGORY_DIVIDENDS.to_string(),
+                label: "Dividends".to_string(),
+                mapped_category: Some(CATEGORY_DIVIDENDS.to_string()),
+                suggested_declaration_box: Some("2042-2DC".to_string()),
+                source_locator_json: None,
+                value_text: Some("Dividends 10".to_string()),
+                amount_eur: Some(Decimal::from(10u32)),
+                confidence: 0.55,
+                status: "SUGGESTED".to_string(),
+                confirmed_amount_eur: None,
+            }],
+        );
+
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0]
+            .code
+            .starts_with("DOCUMENT_EXTRACTION_LOW_CONFIDENCE:"));
     }
 }
