@@ -43,6 +43,13 @@ import {
 import { Badge } from "@wealthfolio/ui/components/ui/badge";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Checkbox } from "@wealthfolio/ui/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@wealthfolio/ui/components/ui/dialog";
 import { Input } from "@wealthfolio/ui/components/ui/input";
 import { Label } from "@wealthfolio/ui/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@wealthfolio/ui/components/ui/card";
@@ -117,6 +124,12 @@ function formatSourceLocator(sourceLocatorJson: string | null | undefined) {
   } catch {
     return sourceLocatorJson;
   }
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
 function TaxEventRow({
@@ -734,6 +747,7 @@ export default function TaxesPage() {
     }
     return byDocument;
   }, [reportDetail]);
+  const [previewDocumentId, setPreviewDocumentId] = useState<string | null>(null);
   const documentNameById = useMemo(() => {
     const byId = new Map<string, string>();
     for (const document of reportDetail?.documents ?? []) {
@@ -741,6 +755,29 @@ export default function TaxesPage() {
     }
     return byId;
   }, [reportDetail]);
+  const latestExtractionPreview = previewDocumentId
+    ? latestExtractionByDocument.get(previewDocumentId)?.extraction.rawTextPreview ?? null
+    : null;
+  const summary = useMemo(() => {
+    const events = reportDetail?.events ?? [];
+    const includedEvents = events.filter((event) => event.included);
+    const sumCategory = (categories: string[]) =>
+      includedEvents.reduce((sum, event) => {
+        if (!categories.includes(event.category)) return sum;
+        const value =
+          event.taxableAmountEur == null ? 0 : Number(event.taxableAmountEur);
+        return Number.isFinite(value) ? sum + value : sum;
+      }, 0);
+
+    return {
+      taxableIncome: sumCategory(["DIVIDENDS", "INTEREST"]),
+      realizedGains: sumCategory(["SECURITY_GAINS"]),
+      withholdingTax: sumCategory(["FOREIGN_WITHHOLDING_TAX"]),
+      needsReviewCount:
+        (reportDetail?.issues?.length ?? 0) +
+        extractedFields.filter((field) => field.status === "SUGGESTED").length,
+    };
+  }, [extractedFields, reportDetail]);
   const extractionActionsDisabled =
     isReportLocked ||
     confirmFieldMutation.isPending ||
@@ -870,6 +907,71 @@ export default function TaxesPage() {
         </Card>
       </div>
 
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Taxable Income</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold">{formatAmount(summary.taxableIncome)}</div>
+            <p className="text-muted-foreground text-xs">Dividends and interest currently included</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Realized Gains/Losses</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold">{formatAmount(summary.realizedGains)}</div>
+            <p className="text-muted-foreground text-xs">Included disposal events in EUR</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Withholding Tax</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold">{formatAmount(summary.withholdingTax)}</div>
+            <p className="text-muted-foreground text-xs">Reserved for supported withholding events</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Needs Review</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold">{summary.needsReviewCount}</div>
+            <p className="text-muted-foreground text-xs">Issues plus suggested extracted fields</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {selectedReport && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Report Snapshot</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-4">
+            <div>
+              <div className="text-muted-foreground text-xs uppercase tracking-wide">Rule Pack</div>
+              <div className="mt-1 text-sm font-medium">{selectedReport.rulePackVersion}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs uppercase tracking-wide">Generated</div>
+              <div className="mt-1 text-sm font-medium">{formatDateTime(selectedReport.generatedAt)}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs uppercase tracking-wide">Finalized</div>
+              <div className="mt-1 text-sm font-medium">{formatDateTime(selectedReport.finalizedAt)}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs uppercase tracking-wide">Status</div>
+              <div className="mt-1 text-sm font-medium">{selectedReport.status}</div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -968,6 +1070,7 @@ export default function TaxesPage() {
                       <div className="text-muted-foreground text-xs">
                         {document.documentType} · {Math.round(document.sizeBytes / 1024)} KB
                       </div>
+                      <div className="text-muted-foreground text-xs">SHA-256 {document.sha256}</div>
                       {latestExtractionByDocument.get(document.id) && (
                         <div className="text-muted-foreground mt-1 text-xs">
                           Latest extraction: {latestExtractionByDocument.get(document.id)?.extraction.method} ·{" "}
@@ -1000,6 +1103,14 @@ export default function TaxesPage() {
                         onClick={() => setCloudExtractionDocumentId(document.id)}
                       >
                         Use Cloud
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!latestExtractionByDocument.get(document.id)}
+                        onClick={() => setPreviewDocumentId(document.id)}
+                      >
+                        Preview Text
                       </Button>
                       <Button
                         size="icon"
@@ -1248,6 +1359,23 @@ export default function TaxesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={previewDocumentId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPreviewDocumentId(null);
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Extracted Text Preview</DialogTitle>
+            <DialogDescription>
+              Local text extracted from {previewDocumentId ? documentNameById.get(previewDocumentId) : "the selected document"}.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea value={latestExtractionPreview ?? "No extracted text preview available."} readOnly className="min-h-96 font-mono text-xs" />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
