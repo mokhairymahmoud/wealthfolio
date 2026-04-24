@@ -31,10 +31,20 @@ import type {
   TaxYearReport,
 } from "@/lib/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@wealthfolio/ui/components/ui/alert-dialog";
 import { Badge } from "@wealthfolio/ui/components/ui/badge";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Checkbox } from "@wealthfolio/ui/components/ui/checkbox";
 import { Input } from "@wealthfolio/ui/components/ui/input";
+import { Label } from "@wealthfolio/ui/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@wealthfolio/ui/components/ui/card";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
@@ -46,6 +56,7 @@ import {
   TableHeader,
   TableRow,
 } from "@wealthfolio/ui/components/ui/table";
+import { Textarea } from "@wealthfolio/ui/components/ui/textarea";
 import { useCallback, useMemo, useState } from "react";
 
 function currentTaxYear() {
@@ -84,7 +95,14 @@ function formatAmount(value: number | string | null | undefined) {
 }
 
 function flattenExtractedFields(detail: TaxReportDetail | null | undefined) {
-  return (detail?.extractions ?? []).flatMap((result) => result.fields);
+  const results = detail?.extractions ?? [];
+  const latestByDocument = new Map<string, TaxReportDetail["extractions"][number]>();
+  for (const result of results) {
+    if (!latestByDocument.has(result.extraction.documentId)) {
+      latestByDocument.set(result.extraction.documentId, result);
+    }
+  }
+  return Array.from(latestByDocument.values()).flatMap((result) => result.fields);
 }
 
 function TaxEventRow({
@@ -344,6 +362,101 @@ function TaxReconciliationRow({
   );
 }
 
+function ExtractionFieldRow({
+  field,
+  disabled,
+  onConfirm,
+  onCorrect,
+  onReject,
+}: {
+  field: TaxReportDetail["extractions"][number]["fields"][number];
+  disabled: boolean;
+  onConfirm: () => void;
+  onCorrect: (amount: number) => void;
+  onReject: () => void;
+}) {
+  const [isCorrecting, setIsCorrecting] = useState(false);
+  const [correctedAmount, setCorrectedAmount] = useState(
+    field.confirmedAmountEur != null
+      ? String(field.confirmedAmountEur)
+      : field.amountEur != null
+        ? String(field.amountEur)
+        : "",
+  );
+
+  const saveCorrection = useCallback(() => {
+    const parsed = correctedAmount.trim() === "" ? Number.NaN : Number(correctedAmount);
+    if (!Number.isFinite(parsed)) return;
+    onCorrect(parsed);
+    setIsCorrecting(false);
+  }, [correctedAmount, onCorrect]);
+
+  return (
+    <TableRow key={field.id}>
+      <TableCell>
+        <div className="font-medium">{field.label}</div>
+        <div className="text-muted-foreground max-w-56 truncate text-xs">{field.valueText}</div>
+      </TableCell>
+      <TableCell>
+        <div>{formatAmount(field.confirmedAmountEur ?? field.amountEur)}</div>
+        <div className="text-muted-foreground text-xs">Confidence {Math.round(field.confidence * 100)}%</div>
+      </TableCell>
+      <TableCell>
+        <Badge
+          variant={
+            field.status === "CONFIRMED" || field.status === "CORRECTED" ? "default" : "outline"
+          }
+        >
+          {field.status}
+        </Badge>
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="flex justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onConfirm}
+            disabled={disabled || field.status === "CONFIRMED"}
+          >
+            Confirm
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setIsCorrecting((prev) => !prev)}
+            disabled={disabled}
+          >
+            Correct
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onReject}
+            disabled={disabled || field.status === "REJECTED"}
+          >
+            Reject
+          </Button>
+        </div>
+        {isCorrecting && (
+          <div className="mt-2 flex justify-end gap-2">
+            <Input
+              className="h-8 w-32"
+              type="number"
+              step="0.01"
+              value={correctedAmount}
+              onChange={(event) => setCorrectedAmount(event.target.value)}
+              disabled={disabled}
+            />
+            <Button size="sm" onClick={saveCorrection} disabled={disabled}>
+              Save
+            </Button>
+          </div>
+        )}
+      </TableCell>
+    </TableRow>
+  );
+}
+
 function TaxesSkeleton() {
   return (
     <div className="space-y-4 p-4">
@@ -362,6 +475,7 @@ export default function TaxesPage() {
   const queryClient = useQueryClient();
   const [taxYear, setTaxYear] = useState(currentTaxYear());
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [cloudExtractionDocumentId, setCloudExtractionDocumentId] = useState<string | null>(null);
 
   const { data: profile, isLoading: isProfileLoading } = useQuery({
     queryKey: [QueryKeys.TAX_PROFILE],
@@ -469,6 +583,45 @@ export default function TaxesPage() {
     },
   });
 
+  const correctFieldMutation = useMutation({
+    mutationFn: ({ fieldId, amount }: { fieldId: string; amount: number }) =>
+      updateExtractedTaxField({
+        fieldId,
+        status: "CORRECTED",
+        confirmedAmountEur: amount,
+      }),
+    onSuccess: () => {
+      if (selectedReport) {
+        queryClient.invalidateQueries({ queryKey: QueryKeys.taxReportDetail(selectedReport.id) });
+      }
+    },
+  });
+
+  const rejectFieldMutation = useMutation({
+    mutationFn: (fieldId: string) =>
+      updateExtractedTaxField({
+        fieldId,
+        status: "REJECTED",
+        confirmedAmountEur: null,
+      }),
+    onSuccess: () => {
+      if (selectedReport) {
+        queryClient.invalidateQueries({ queryKey: QueryKeys.taxReportDetail(selectedReport.id) });
+      }
+    },
+  });
+
+  const rerunExtractionMutation = useMutation({
+    mutationFn: ({ documentId, method, consentGranted }: { documentId: string; method: string; consentGranted: boolean }) =>
+      extractTaxDocument({ documentId, method, consentGranted }),
+    onSuccess: () => {
+      setCloudExtractionDocumentId(null);
+      if (selectedReport) {
+        queryClient.invalidateQueries({ queryKey: QueryKeys.taxReportDetail(selectedReport.id) });
+      }
+    },
+  });
+
   const reconcileReportMutation = useMutation({
     mutationFn: (reportId: string) => reconcileTaxYearReport(reportId),
     onSuccess: () => {
@@ -550,6 +703,20 @@ export default function TaxesPage() {
     [accountTaxProfiles],
   );
   const extractedFields = flattenExtractedFields(reportDetail);
+  const latestExtractionByDocument = useMemo(() => {
+    const byDocument = new Map<string, TaxReportDetail["extractions"][number]>();
+    for (const extraction of reportDetail?.extractions ?? []) {
+      if (!byDocument.has(extraction.extraction.documentId)) {
+        byDocument.set(extraction.extraction.documentId, extraction);
+      }
+    }
+    return byDocument;
+  }, [reportDetail]);
+  const extractionActionsDisabled =
+    isReportLocked ||
+    confirmFieldMutation.isPending ||
+    correctFieldMutation.isPending ||
+    rejectFieldMutation.isPending;
   const isLoading =
     isProfileLoading || areAccountsLoading || areAccountProfilesLoading || areReportsLoading;
 
@@ -772,9 +939,37 @@ export default function TaxesPage() {
                       <div className="text-muted-foreground text-xs">
                         {document.documentType} · {Math.round(document.sizeBytes / 1024)} KB
                       </div>
+                      {latestExtractionByDocument.get(document.id) && (
+                        <div className="text-muted-foreground mt-1 text-xs">
+                          Latest extraction: {latestExtractionByDocument.get(document.id)?.extraction.method} ·{" "}
+                          {latestExtractionByDocument.get(document.id)?.extraction.status}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant="outline">Encrypted</Badge>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isReportLocked || rerunExtractionMutation.isPending}
+                        onClick={() =>
+                          rerunExtractionMutation.mutate({
+                            documentId: document.id,
+                            method: "LOCAL_TEXT",
+                            consentGranted: false,
+                          })
+                        }
+                      >
+                        Re-extract
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isReportLocked || rerunExtractionMutation.isPending}
+                        onClick={() => setCloudExtractionDocumentId(document.id)}
+                      >
+                        Use Cloud
+                      </Button>
                       <Button
                         size="icon"
                         variant="ghost"
@@ -826,36 +1021,16 @@ export default function TaxesPage() {
                 </TableHeader>
                 <TableBody>
                   {extractedFields.map((field) => (
-                    <TableRow key={field.id}>
-                      <TableCell>
-                        <div className="font-medium">{field.label}</div>
-                        <div className="text-muted-foreground max-w-56 truncate text-xs">
-                          {field.valueText}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {formatAmount(field.confirmedAmountEur ?? field.amountEur)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={field.status === "CONFIRMED" ? "default" : "outline"}>
-                          {field.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => confirmFieldMutation.mutate(field.id)}
-                          disabled={
-                            field.status === "CONFIRMED" ||
-                            confirmFieldMutation.isPending ||
-                            isReportLocked
-                          }
-                        >
-                          Confirm
-                        </Button>
-                      </TableCell>
-                    </TableRow>
+                    <ExtractionFieldRow
+                      key={field.id}
+                      field={field}
+                      disabled={extractionActionsDisabled}
+                      onConfirm={() => confirmFieldMutation.mutate(field.id)}
+                      onCorrect={(amount) =>
+                        correctFieldMutation.mutate({ fieldId: field.id, amount })
+                      }
+                      onReject={() => rejectFieldMutation.mutate(field.id)}
+                    />
                   ))}
                   {extractedFields.length === 0 && (
                     <TableRow>
@@ -992,6 +1167,51 @@ export default function TaxesPage() {
           </CardContent>
         </Card>
       )}
+
+      <AlertDialog
+        open={cloudExtractionDocumentId !== null}
+        onOpenChange={(open) => {
+          if (!open) setCloudExtractionDocumentId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Allow cloud extraction for this IFU?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Cloud extraction may send document text to an external AI provider. Use this only if
+              local extraction was insufficient and you consent to that transfer for this document.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="cloud-extraction-notes">What will happen</Label>
+            <Textarea
+              id="cloud-extraction-notes"
+              value="Wealthfolio will record your consent and run the cloud extraction path for this document. Unconfirmed values will still stay out of reconciliation totals until you review them."
+              readOnly
+              className="min-h-24"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rerunExtractionMutation.isPending}>Cancel</AlertDialogCancel>
+            <Button
+              onClick={() => {
+                if (!cloudExtractionDocumentId) return;
+                rerunExtractionMutation.mutate({
+                  documentId: cloudExtractionDocumentId,
+                  method: "CLOUD_AI",
+                  consentGranted: true,
+                });
+              }}
+              disabled={!cloudExtractionDocumentId || rerunExtractionMutation.isPending}
+            >
+              {rerunExtractionMutation.isPending ? (
+                <Icons.Spinner className="h-4 w-4 animate-spin" />
+              ) : null}
+              I Consent
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
