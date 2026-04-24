@@ -127,7 +127,8 @@ export type TaxEventType =
   | "DIVIDEND_RECEIVED"
   | "INTEREST_RECEIVED"
   | "SECURITY_DISPOSAL"
-  | "FEE_PAID";
+  | "FEE_PAID"
+  | "FOREIGN_WITHHOLDING_TAX";
 
 export type TaxConfidence = "HIGH" | "MEDIUM" | "LOW" | "EXCLUDED";
 

@@ -115,6 +115,7 @@ pub enum TaxEventType {
     InterestReceived,
     SecurityDisposal,
     FeePaid,
+    ForeignWithholdingTax,
 }
 
 impl TaxEventType {
@@ -124,6 +125,7 @@ impl TaxEventType {
             TaxEventType::InterestReceived => "INTEREST_RECEIVED",
             TaxEventType::SecurityDisposal => "SECURITY_DISPOSAL",
             TaxEventType::FeePaid => "FEE_PAID",
+            TaxEventType::ForeignWithholdingTax => "FOREIGN_WITHHOLDING_TAX",
         }
     }
 }
@@ -137,6 +139,7 @@ impl TryFrom<&str> for TaxEventType {
             "INTEREST_RECEIVED" => Ok(TaxEventType::InterestReceived),
             "SECURITY_DISPOSAL" => Ok(TaxEventType::SecurityDisposal),
             "FEE_PAID" => Ok(TaxEventType::FeePaid),
+            "FOREIGN_WITHHOLDING_TAX" => Ok(TaxEventType::ForeignWithholdingTax),
             _ => Err(format!("Unsupported tax event type: {value}")),
         }
     }
