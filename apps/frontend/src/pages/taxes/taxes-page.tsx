@@ -14,6 +14,7 @@ import {
   reconcileTaxYearReport,
   updateAccountTaxProfile,
   updateExtractedTaxField,
+  updateTaxReconciliationEntry,
   updateTaxEvent,
   uploadTaxDocument,
 } from "@/adapters";
@@ -24,6 +25,8 @@ import type {
   AccountTaxProfile,
   TaxEvent,
   TaxEventUpdate,
+  TaxReconciliationEntry,
+  TaxReconciliationEntryUpdate,
   TaxReportDetail,
   TaxYearReport,
 } from "@/lib/types";
@@ -95,6 +98,9 @@ function TaxEventRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [showTrace, setShowTrace] = useState(false);
+  const hasTraceDetails =
+    (event.sources?.length ?? 0) > 0 || (event.lotAllocations?.length ?? 0) > 0;
 
   const startEdit = useCallback(() => {
     if (disabled) return;
@@ -117,51 +123,222 @@ function TaxEventRow({
   }, [draft, event, onUpdate]);
 
   return (
-    <TableRow key={event.id} className={event.userOverride ? "bg-muted/40" : undefined}>
-      <TableCell>
-        <Checkbox
-          checked={event.included}
-          disabled={disabled}
-          onCheckedChange={(checked) =>
-            onUpdate({
-              id: event.id,
-              included: checked === true,
-              taxableAmountEur: event.taxableAmountEur as number | null,
-              notes: event.notes ?? null,
-            })
-          }
-        />
-      </TableCell>
-      <TableCell>{event.eventDate}</TableCell>
-      <TableCell>{event.eventType}</TableCell>
-      <TableCell>{event.accountId}</TableCell>
-      <TableCell
-        className={!disabled ? "cursor-pointer" : undefined}
-        onClick={!editing ? startEdit : undefined}
-      >
-        {editing ? (
-          <Input
-            className="h-7 w-28 text-sm"
-            type="number"
-            step="0.01"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commitEdit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitEdit();
-              if (e.key === "Escape") setEditing(false);
-            }}
-            autoFocus
+    <>
+      <TableRow key={event.id} className={event.userOverride ? "bg-muted/40" : undefined}>
+        <TableCell>
+          <Checkbox
+            checked={event.included}
+            disabled={disabled}
+            onCheckedChange={(checked) =>
+              onUpdate({
+                id: event.id,
+                included: checked === true,
+                taxableAmountEur: event.taxableAmountEur as number | null,
+                notes: event.notes ?? null,
+              })
+            }
           />
-        ) : (
-          formatAmount(event.taxableAmountEur)
-        )}
-      </TableCell>
+        </TableCell>
+        <TableCell>{event.eventDate}</TableCell>
+        <TableCell>{event.eventType}</TableCell>
+        <TableCell>{event.accountId}</TableCell>
+        <TableCell
+          className={!disabled ? "cursor-pointer" : undefined}
+          onClick={!editing ? startEdit : undefined}
+        >
+          {editing ? (
+            <Input
+              className="h-7 w-28 text-sm"
+              type="number"
+              step="0.01"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commitEdit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitEdit();
+                if (e.key === "Escape") setEditing(false);
+              }}
+              autoFocus
+            />
+          ) : (
+            formatAmount(event.taxableAmountEur)
+          )}
+        </TableCell>
+        <TableCell>
+          <div className="flex items-center gap-1">
+            <Badge variant={event.included ? "outline" : "destructive"}>{event.confidence}</Badge>
+            {event.userOverride && <Icons.Pencil className="text-muted-foreground h-3 w-3" />}
+          </div>
+        </TableCell>
+        <TableCell>
+          {hasTraceDetails ? (
+            <Button size="sm" variant="outline" onClick={() => setShowTrace((prev) => !prev)}>
+              {showTrace ? "Hide" : "Trace"}
+            </Button>
+          ) : (
+            <span className="text-muted-foreground text-xs">-</span>
+          )}
+        </TableCell>
+      </TableRow>
+      {showTrace && hasTraceDetails && (
+        <TableRow>
+          <TableCell colSpan={7} className="bg-muted/20">
+            <div className="grid gap-4 py-2 md:grid-cols-2">
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Sources</div>
+                {(event.sources ?? []).length > 0 ? (
+                  <div className="space-y-2">
+                    {(event.sources ?? []).map((source) => (
+                      <div key={source.id} className="rounded-md border p-2 text-sm">
+                        <div className="font-medium">{source.sourceType}</div>
+                        <div className="text-muted-foreground text-xs">{source.sourceId}</div>
+                        {source.description && (
+                          <div className="text-muted-foreground mt-1 text-xs">
+                            {source.description}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-muted-foreground text-sm">No source rows recorded.</div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Lot Allocations</div>
+                {(event.lotAllocations ?? []).length > 0 ? (
+                  <div className="space-y-2">
+                    {(event.lotAllocations ?? []).map((lot) => (
+                      <div key={lot.id} className="rounded-md border p-2 text-sm">
+                        <div className="font-medium">Activity {lot.sourceActivityId}</div>
+                        <div className="text-muted-foreground text-xs">
+                          Acquired {lot.acquisitionDate}
+                        </div>
+                        <div className="mt-1 text-xs">
+                          Qty {lot.quantity} · Cost {formatAmount(lot.costBasisEur)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-muted-foreground text-sm">No lot allocations recorded.</div>
+                )}
+              </div>
+            </div>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+}
+
+function TaxReconciliationRow({
+  entry,
+  disabled,
+  onUpdate,
+}: {
+  entry: TaxReconciliationEntry;
+  disabled: boolean;
+  onUpdate: (update: TaxReconciliationEntryUpdate) => void;
+}) {
+  const [isOverrideEditing, setIsOverrideEditing] = useState(entry.status === "USER_OVERRIDE");
+  const [manualAmount, setManualAmount] = useState(
+    entry.selectedAmountEur != null ? String(entry.selectedAmountEur) : "",
+  );
+  const [manualReason, setManualReason] = useState(entry.notes ?? "");
+
+  const selectAppAmount = useCallback(() => {
+    onUpdate({
+      id: entry.id,
+      selectedAmountEur: entry.appAmountEur,
+      status: "USER_SELECTED_APP",
+      notes: null,
+    });
+    setIsOverrideEditing(false);
+  }, [entry.appAmountEur, entry.id, onUpdate]);
+
+  const selectDocumentAmount = useCallback(() => {
+    onUpdate({
+      id: entry.id,
+      selectedAmountEur: entry.documentAmountEur,
+      status: "USER_SELECTED_DOCUMENT",
+      notes: null,
+    });
+    setIsOverrideEditing(false);
+  }, [entry.documentAmountEur, entry.id, onUpdate]);
+
+  const saveManualOverride = useCallback(() => {
+    const parsed = manualAmount.trim() === "" ? null : Number(manualAmount);
+    if (parsed === null || !Number.isFinite(parsed)) return;
+    onUpdate({
+      id: entry.id,
+      selectedAmountEur: parsed,
+      status: "USER_OVERRIDE",
+      notes: manualReason,
+    });
+    setIsOverrideEditing(false);
+  }, [entry.id, manualAmount, manualReason, onUpdate]);
+
+  return (
+    <TableRow key={entry.id}>
+      <TableCell className="font-medium">{entry.category}</TableCell>
+      <TableCell>{entry.suggestedBox ?? "-"}</TableCell>
+      <TableCell>{formatAmount(entry.appAmountEur)}</TableCell>
+      <TableCell>{formatAmount(entry.documentAmountEur)}</TableCell>
+      <TableCell>{formatAmount(entry.selectedAmountEur)}</TableCell>
       <TableCell>
-        <div className="flex items-center gap-1">
-          <Badge variant={event.included ? "outline" : "destructive"}>{event.confidence}</Badge>
-          {event.userOverride && <Icons.Pencil className="text-muted-foreground h-3 w-3" />}
+        <Badge variant={entry.status === "MATCHED" ? "default" : "outline"}>{entry.status}</Badge>
+      </TableCell>
+      <TableCell className="min-w-72">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={entry.status === "USER_SELECTED_APP" ? "default" : "outline"}
+            disabled={disabled || entry.appAmountEur == null}
+            onClick={selectAppAmount}
+          >
+            Use App
+          </Button>
+          <Button
+            size="sm"
+            variant={entry.status === "USER_SELECTED_DOCUMENT" ? "default" : "outline"}
+            disabled={disabled || entry.documentAmountEur == null}
+            onClick={selectDocumentAmount}
+          >
+            Use IFU
+          </Button>
+          <Button
+            size="sm"
+            variant={isOverrideEditing || entry.status === "USER_OVERRIDE" ? "default" : "outline"}
+            disabled={disabled}
+            onClick={() => setIsOverrideEditing((prev) => !prev)}
+          >
+            Manual
+          </Button>
         </div>
+        {isOverrideEditing && (
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <Input
+              className="h-8"
+              type="number"
+              step="0.01"
+              value={manualAmount}
+              onChange={(event) => setManualAmount(event.target.value)}
+              placeholder="Manual EUR amount"
+              disabled={disabled}
+            />
+            <Input
+              className="h-8"
+              value={manualReason}
+              onChange={(event) => setManualReason(event.target.value)}
+              placeholder="Reason required"
+              disabled={disabled}
+            />
+            <Button size="sm" disabled={disabled} onClick={saveManualOverride}>
+              Save
+            </Button>
+          </div>
+        )}
       </TableCell>
     </TableRow>
   );
@@ -266,7 +443,7 @@ export default function TaxesPage() {
       });
       return extractTaxDocument({
         documentId: document.id,
-        method: "LOCAL_HEURISTIC",
+        method: "LOCAL_TEXT",
         consentGranted: false,
       });
     },
@@ -333,6 +510,15 @@ export default function TaxesPage() {
 
   const updateTaxEventMutation = useMutation({
     mutationFn: (update: TaxEventUpdate) => updateTaxEvent(update),
+    onSuccess: () => {
+      if (selectedReport) {
+        queryClient.invalidateQueries({ queryKey: QueryKeys.taxReportDetail(selectedReport.id) });
+      }
+    },
+  });
+
+  const updateTaxReconciliationEntryMutation = useMutation({
+    mutationFn: (update: TaxReconciliationEntryUpdate) => updateTaxReconciliationEntry(update),
     onSuccess: () => {
       if (selectedReport) {
         queryClient.invalidateQueries({ queryKey: QueryKeys.taxReportDetail(selectedReport.id) });
@@ -734,26 +920,27 @@ export default function TaxesPage() {
                 <TableRow>
                   <TableHead>Category</TableHead>
                   <TableHead>Box</TableHead>
+                  <TableHead>App</TableHead>
+                  <TableHead>IFU</TableHead>
                   <TableHead>Selected</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Choice</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {(reportDetail?.reconciliation ?? []).map((entry) => (
-                  <TableRow key={entry.id}>
-                    <TableCell className="font-medium">{entry.category}</TableCell>
-                    <TableCell>{entry.suggestedBox ?? "-"}</TableCell>
-                    <TableCell>{formatAmount(entry.selectedAmountEur)}</TableCell>
-                    <TableCell>
-                      <Badge variant={entry.status === "MATCHED" ? "default" : "outline"}>
-                        {entry.status}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
+                  <TaxReconciliationRow
+                    key={entry.id}
+                    entry={entry}
+                    disabled={
+                      isReportLocked || updateTaxReconciliationEntryMutation.isPending
+                    }
+                    onUpdate={(update) => updateTaxReconciliationEntryMutation.mutate(update)}
+                  />
                 ))}
                 {(reportDetail?.reconciliation ?? []).length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-muted-foreground py-8 text-center">
+                    <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
                       No declaration lines generated.
                     </TableCell>
                   </TableRow>
@@ -779,6 +966,7 @@ export default function TaxesPage() {
                   <TableHead>Account</TableHead>
                   <TableHead>Taxable EUR</TableHead>
                   <TableHead>Confidence</TableHead>
+                  <TableHead>Traceability</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -794,7 +982,7 @@ export default function TaxesPage() {
                 ))}
                 {(reportDetail?.events ?? []).length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-muted-foreground py-8 text-center">
+                    <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
                       No tax events generated.
                     </TableCell>
                   </TableRow>

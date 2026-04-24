@@ -110,7 +110,7 @@ impl TaxRepository {
         conn: &mut SqliteConnection,
         report: TaxYearReport,
     ) -> Result<TaxReportDetail> {
-        let events = tax_events::table
+        let mut events = tax_events::table
             .select(TaxEventDB::as_select())
             .filter(tax_events::report_id.eq(&report.id))
             .order(tax_events::event_date.asc())
@@ -118,7 +118,55 @@ impl TaxRepository {
             .map_err(StorageError::from)?
             .into_iter()
             .map(TaxEvent::from)
-            .collect();
+            .collect::<Vec<_>>();
+
+        let event_ids = events
+            .iter()
+            .map(|event| event.id.clone())
+            .collect::<Vec<_>>();
+        let mut sources_by_event: HashMap<String, Vec<wealthfolio_core::tax::TaxEventSource>> =
+            HashMap::new();
+        let mut lots_by_event: HashMap<String, Vec<wealthfolio_core::tax::TaxLotAllocation>> =
+            HashMap::new();
+
+        if !event_ids.is_empty() {
+            let source_rows = tax_event_sources::table
+                .select(TaxEventSourceDB::as_select())
+                .filter(tax_event_sources::tax_event_id.eq_any(&event_ids))
+                .order((
+                    tax_event_sources::tax_event_id.asc(),
+                    tax_event_sources::created_at.asc(),
+                ))
+                .load::<TaxEventSourceDB>(conn)
+                .map_err(StorageError::from)?;
+            for row in source_rows {
+                sources_by_event
+                    .entry(row.tax_event_id.clone())
+                    .or_default()
+                    .push(row.into());
+            }
+
+            let lot_rows = tax_lot_allocations::table
+                .select(TaxLotAllocationDB::as_select())
+                .filter(tax_lot_allocations::tax_event_id.eq_any(&event_ids))
+                .order((
+                    tax_lot_allocations::tax_event_id.asc(),
+                    tax_lot_allocations::acquisition_date.asc(),
+                ))
+                .load::<TaxLotAllocationDB>(conn)
+                .map_err(StorageError::from)?;
+            for row in lot_rows {
+                lots_by_event
+                    .entry(row.tax_event_id.clone())
+                    .or_default()
+                    .push(row.into());
+            }
+
+            for event in &mut events {
+                event.sources = sources_by_event.remove(&event.id).unwrap_or_default();
+                event.lot_allocations = lots_by_event.remove(&event.id).unwrap_or_default();
+            }
+        }
 
         let issues = tax_issues::table
             .select(TaxIssueDB::as_select())

@@ -338,6 +338,8 @@ impl From<TaxEventDB> for TaxEvent {
             included: db.included != 0,
             notes: db.notes,
             user_override: db.user_override != 0,
+            sources: Vec::new(),
+            lot_allocations: Vec::new(),
             created_at: db.created_at,
             updated_at: db.updated_at,
         }

@@ -150,8 +150,29 @@ export interface TaxEvent {
   included: boolean;
   notes?: string | null;
   userOverride: boolean;
+  sources?: TaxEventSource[];
+  lotAllocations?: TaxLotAllocation[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TaxEventSource {
+  id: string;
+  taxEventId: string;
+  sourceType: string;
+  sourceId: string;
+  description?: string | null;
+  createdAt: string;
+}
+
+export interface TaxLotAllocation {
+  id: string;
+  taxEventId: string;
+  sourceActivityId: string;
+  quantity: string | number;
+  acquisitionDate: string;
+  costBasisEur: string | number;
+  createdAt: string;
 }
 
 export interface TaxEventUpdate {

@@ -150,6 +150,35 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
         activity.activity_date.naive_utc().date().year()
     }
 
+    fn normalize_extraction_method(method: &str) -> Result<String> {
+        match method {
+            "LOCAL_TEXT" | "LOCAL_HEURISTIC" => Ok("LOCAL_TEXT".to_string()),
+            "CLOUD_AI" => Ok("CLOUD_AI".to_string()),
+            _ => Err(Self::invalid_input(format!(
+                "Unsupported tax extraction method: {method}"
+            ))),
+        }
+    }
+
+    fn extract_local_document_text(
+        content: &[u8],
+        mime_type: Option<&str>,
+        filename: &str,
+    ) -> Result<String> {
+        let is_pdf = mime_type
+            .map(|mime| mime.eq_ignore_ascii_case("application/pdf"))
+            .unwrap_or(false)
+            || filename.to_ascii_lowercase().ends_with(".pdf");
+
+        if is_pdf {
+            return pdf_extract::extract_text_from_mem(content).map_err(|error| {
+                Self::invalid_input(format!("Failed to extract text from PDF document: {error}"))
+            });
+        }
+
+        Ok(String::from_utf8_lossy(content).to_string())
+    }
+
     fn cto_account_ids(&self) -> Result<HashSet<String>> {
         Ok(self
             .repository
@@ -794,21 +823,36 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         &self,
         request: TaxDocumentExtractionRequest,
     ) -> Result<TaxDocumentExtractionResult> {
-        if request.method == "CLOUD_AI" && !request.consent_granted {
+        let normalized_method = Self::normalize_extraction_method(&request.method)?;
+        if normalized_method == "CLOUD_AI" && !request.consent_granted {
             return Err(Error::Validation(ValidationError::InvalidInput(
                 "Cloud AI extraction requires explicit consent.".to_string(),
             )));
         }
-        self.editable_report_for_document(&request.document_id)?;
+        let document = self
+            .repository
+            .get_tax_document(&request.document_id)?
+            .ok_or_else(|| {
+                Self::not_found(format!("Tax document {} not found", request.document_id))
+            })?;
+        self.editable_report_by_id(&document.report_id)?;
         let content = self
             .repository
             .get_tax_document_content(&request.document_id)?
             .ok_or_else(|| {
                 Self::not_found(format!("Tax document {} not found", request.document_id))
             })?;
-        let text = String::from_utf8_lossy(&content).to_string();
+        let text = Self::extract_local_document_text(
+            &content,
+            document.mime_type.as_deref(),
+            &document.filename,
+        )?;
         let preview: String = text.chars().take(4000).collect();
         let fields = Self::parse_ifu_fields(&preview);
+        let request = TaxDocumentExtractionRequest {
+            method: normalized_method,
+            ..request
+        };
         self.repository
             .create_tax_document_extraction(request, Some(preview), fields)
             .await
@@ -861,8 +905,57 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         update: TaxReconciliationEntryUpdate,
     ) -> Result<TaxReconciliationEntry> {
         self.editable_report_for_reconciliation_entry(&update.id)?;
+        let existing = self
+            .repository
+            .get_tax_reconciliation_entry(&update.id)?
+            .ok_or_else(|| {
+                Self::not_found(format!("Tax reconciliation entry {} not found", update.id))
+            })?;
+
+        let status = update.status.trim();
+        let normalized_update = match status {
+            "USER_SELECTED_APP" => TaxReconciliationEntryUpdate {
+                selected_amount_eur: existing.app_amount_eur,
+                status: status.to_string(),
+                notes: update.notes,
+                ..update
+            },
+            "USER_SELECTED_DOCUMENT" => TaxReconciliationEntryUpdate {
+                selected_amount_eur: existing.document_amount_eur,
+                status: status.to_string(),
+                notes: update.notes,
+                ..update
+            },
+            "USER_OVERRIDE" => {
+                let has_reason = update
+                    .notes
+                    .as_ref()
+                    .map(|notes| !notes.trim().is_empty())
+                    .unwrap_or(false);
+                if update.selected_amount_eur.is_none() {
+                    return Err(Self::invalid_input(
+                        "Manual tax reconciliation overrides require a selected amount",
+                    ));
+                }
+                if !has_reason {
+                    return Err(Self::invalid_input(
+                        "Manual tax reconciliation overrides require a reason",
+                    ));
+                }
+                TaxReconciliationEntryUpdate {
+                    status: status.to_string(),
+                    notes: update.notes.map(|notes| notes.trim().to_string()),
+                    ..update
+                }
+            }
+            _ => TaxReconciliationEntryUpdate {
+                status: status.to_string(),
+                notes: update.notes,
+                ..update
+            },
+        };
         self.repository
-            .update_tax_reconciliation_entry(update)
+            .update_tax_reconciliation_entry(normalized_update)
             .await
     }
 
@@ -1096,6 +1189,7 @@ mod tests {
         reconciliation_entries: RwLock<HashMap<String, TaxReconciliationEntry>>,
         events: RwLock<HashMap<String, TaxEvent>>,
         amended_from: Mutex<Vec<String>>,
+        last_reconciliation_update: Mutex<Option<TaxReconciliationEntryUpdate>>,
     }
 
     impl MockTaxRepository {
@@ -1115,6 +1209,7 @@ mod tests {
                 reconciliation_entries: RwLock::new(HashMap::new()),
                 events: RwLock::new(HashMap::new()),
                 amended_from: Mutex::new(Vec::new()),
+                last_reconciliation_update: Mutex::new(None),
             }
         }
 
@@ -1315,9 +1410,17 @@ mod tests {
 
         async fn update_tax_reconciliation_entry(
             &self,
-            _update: TaxReconciliationEntryUpdate,
+            update: TaxReconciliationEntryUpdate,
         ) -> Result<TaxReconciliationEntry> {
-            panic!("update_tax_reconciliation_entry should not be called in these tests")
+            *self.last_reconciliation_update.lock().unwrap() = Some(update.clone());
+            let mut entries = self.reconciliation_entries.write().unwrap();
+            let entry = entries
+                .get_mut(&update.id)
+                .expect("reconciliation entry should exist");
+            entry.selected_amount_eur = update.selected_amount_eur;
+            entry.status = update.status;
+            entry.notes = update.notes;
+            Ok(entry.clone())
         }
 
         fn get_tax_event(&self, event_id: &str) -> Result<Option<TaxEvent>> {
@@ -1402,6 +1505,8 @@ mod tests {
             included: true,
             notes: None,
             user_override: false,
+            sources: Vec::new(),
+            lot_allocations: Vec::new(),
             created_at: now,
             updated_at: now,
         }
@@ -1623,5 +1728,68 @@ mod tests {
         assert_eq!(entries[0].document_amount_eur, None);
         assert_eq!(entries[0].selected_amount_eur, Some(Decimal::ONE));
         assert_eq!(entries[0].status, "APP_ONLY");
+    }
+
+    #[tokio::test]
+    async fn update_reconciliation_entry_uses_app_amount_for_app_selection() {
+        let report = make_report("report-1", TaxReportStatus::Draft);
+        let repo = Arc::new(MockTaxRepository::new(report.clone()));
+        repo.add_reconciliation_entry(make_reconciliation_entry(&report.id));
+        let service = service_with_repo(repo.clone());
+
+        let entry = service
+            .update_tax_reconciliation_entry(TaxReconciliationEntryUpdate {
+                id: "reconciliation-1".to_string(),
+                selected_amount_eur: None,
+                status: "USER_SELECTED_APP".to_string(),
+                notes: None,
+            })
+            .await
+            .expect("app selection should derive selected amount from app total");
+
+        assert_eq!(entry.selected_amount_eur, Some(Decimal::from(10u32)));
+        assert_eq!(entry.status, "USER_SELECTED_APP");
+    }
+
+    #[tokio::test]
+    async fn update_reconciliation_entry_requires_reason_for_manual_override() {
+        let report = make_report("report-1", TaxReportStatus::Draft);
+        let repo = Arc::new(MockTaxRepository::new(report.clone()));
+        repo.add_reconciliation_entry(make_reconciliation_entry(&report.id));
+        let service = service_with_repo(repo);
+
+        let err = service
+            .update_tax_reconciliation_entry(TaxReconciliationEntryUpdate {
+                id: "reconciliation-1".to_string(),
+                selected_amount_eur: Some(Decimal::from(12u32)),
+                status: "USER_OVERRIDE".to_string(),
+                notes: Some("   ".to_string()),
+            })
+            .await
+            .expect_err("manual override should require a reason");
+
+        assert!(err.to_string().contains("require a reason"));
+    }
+
+    #[test]
+    fn normalize_extraction_method_maps_legacy_local_method() {
+        assert_eq!(
+            TaxService::<MockTaxRepository>::normalize_extraction_method("LOCAL_HEURISTIC")
+                .expect("legacy method should be accepted"),
+            "LOCAL_TEXT"
+        );
+    }
+
+    #[test]
+    fn extract_local_document_text_reads_plain_text_documents() {
+        let text = TaxService::<MockTaxRepository>::extract_local_document_text(
+            b"Dividends 123.45\nInterest 67.89",
+            Some("text/plain"),
+            "ifu.txt",
+        )
+        .expect("plain text extraction should succeed");
+
+        assert!(text.contains("Dividends 123.45"));
+        assert!(text.contains("Interest 67.89"));
     }
 }

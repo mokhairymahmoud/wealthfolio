@@ -197,6 +197,10 @@ pub struct TaxEvent {
     pub included: bool,
     pub notes: Option<String>,
     pub user_override: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub sources: Vec<TaxEventSource>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub lot_allocations: Vec<TaxLotAllocation>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
