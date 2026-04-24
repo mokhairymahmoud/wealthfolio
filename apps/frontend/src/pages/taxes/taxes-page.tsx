@@ -426,7 +426,9 @@ function ExtractionFieldRow({
       </TableCell>
       <TableCell>
         <div>{formatAmount(field.confirmedAmountEur ?? field.amountEur)}</div>
-        <div className="text-muted-foreground text-xs">Confidence {Math.round(field.confidence * 100)}%</div>
+        <div className="text-muted-foreground text-xs">
+          Confidence {Math.round(field.confidence * 100)}%
+        </div>
         {field.suggestedDeclarationBox && (
           <div className="text-muted-foreground text-xs">Box {field.suggestedDeclarationBox}</div>
         )}
@@ -647,8 +649,15 @@ export default function TaxesPage() {
   });
 
   const rerunExtractionMutation = useMutation({
-    mutationFn: ({ documentId, method, consentGranted }: { documentId: string; method: string; consentGranted: boolean }) =>
-      extractTaxDocument({ documentId, method, consentGranted }),
+    mutationFn: ({
+      documentId,
+      method,
+      consentGranted,
+    }: {
+      documentId: string;
+      method: string;
+      consentGranted: boolean;
+    }) => extractTaxDocument({ documentId, method, consentGranted }),
     onSuccess: () => {
       setCloudExtractionDocumentId(null);
       if (selectedReport) {
@@ -756,7 +765,7 @@ export default function TaxesPage() {
     return byId;
   }, [reportDetail]);
   const latestExtractionPreview = previewDocumentId
-    ? latestExtractionByDocument.get(previewDocumentId)?.extraction.rawTextPreview ?? null
+    ? (latestExtractionByDocument.get(previewDocumentId)?.extraction.rawTextPreview ?? null)
     : null;
   const summary = useMemo(() => {
     const events = reportDetail?.events ?? [];
@@ -764,8 +773,7 @@ export default function TaxesPage() {
     const sumCategory = (categories: string[]) =>
       includedEvents.reduce((sum, event) => {
         if (!categories.includes(event.category)) return sum;
-        const value =
-          event.taxableAmountEur == null ? 0 : Number(event.taxableAmountEur);
+        const value = event.taxableAmountEur == null ? 0 : Number(event.taxableAmountEur);
         return Number.isFinite(value) ? sum + value : sum;
       }, 0);
 
@@ -914,7 +922,9 @@ export default function TaxesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold">{formatAmount(summary.taxableIncome)}</div>
-            <p className="text-muted-foreground text-xs">Dividends and interest currently included</p>
+            <p className="text-muted-foreground text-xs">
+              Dividends and interest currently included
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -932,7 +942,9 @@ export default function TaxesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold">{formatAmount(summary.withholdingTax)}</div>
-            <p className="text-muted-foreground text-xs">Reserved for supported withholding events</p>
+            <p className="text-muted-foreground text-xs">
+              Reserved for supported withholding events
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -958,11 +970,15 @@ export default function TaxesPage() {
             </div>
             <div>
               <div className="text-muted-foreground text-xs uppercase tracking-wide">Generated</div>
-              <div className="mt-1 text-sm font-medium">{formatDateTime(selectedReport.generatedAt)}</div>
+              <div className="mt-1 text-sm font-medium">
+                {formatDateTime(selectedReport.generatedAt)}
+              </div>
             </div>
             <div>
               <div className="text-muted-foreground text-xs uppercase tracking-wide">Finalized</div>
-              <div className="mt-1 text-sm font-medium">{formatDateTime(selectedReport.finalizedAt)}</div>
+              <div className="mt-1 text-sm font-medium">
+                {formatDateTime(selectedReport.finalizedAt)}
+              </div>
             </div>
             <div>
               <div className="text-muted-foreground text-xs uppercase tracking-wide">Status</div>
@@ -1073,7 +1089,8 @@ export default function TaxesPage() {
                       <div className="text-muted-foreground text-xs">SHA-256 {document.sha256}</div>
                       {latestExtractionByDocument.get(document.id) && (
                         <div className="text-muted-foreground mt-1 text-xs">
-                          Latest extraction: {latestExtractionByDocument.get(document.id)?.extraction.method} ·{" "}
+                          Latest extraction:{" "}
+                          {latestExtractionByDocument.get(document.id)?.extraction.method} ·{" "}
                           <span className="font-medium">
                             {latestExtractionByDocument.get(document.id)?.extraction.status}
                           </span>
@@ -1221,12 +1238,12 @@ export default function TaxesPage() {
           <CardHeader>
             <CardTitle className="flex items-center justify-between gap-2">
               <span>Declaration Helper</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => selectedReport && reconcileReportMutation.mutate(selectedReport.id)}
-                  disabled={!selectedReport || reconcileReportMutation.isPending || isReportLocked}
-                >
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => selectedReport && reconcileReportMutation.mutate(selectedReport.id)}
+                disabled={!selectedReport || reconcileReportMutation.isPending || isReportLocked}
+              >
                 {reconcileReportMutation.isPending ? (
                   <Icons.Spinner className="h-4 w-4 animate-spin" />
                 ) : (
@@ -1254,9 +1271,7 @@ export default function TaxesPage() {
                   <TaxReconciliationRow
                     key={entry.id}
                     entry={entry}
-                    disabled={
-                      isReportLocked || updateTaxReconciliationEntryMutation.isPending
-                    }
+                    disabled={isReportLocked || updateTaxReconciliationEntryMutation.isPending}
                     onUpdate={(update) => updateTaxReconciliationEntryMutation.mutate(update)}
                   />
                 ))}
@@ -1339,7 +1354,9 @@ export default function TaxesPage() {
             />
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={rerunExtractionMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={rerunExtractionMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
             <Button
               onClick={() => {
                 if (!cloudExtractionDocumentId) return;
@@ -1370,10 +1387,18 @@ export default function TaxesPage() {
           <DialogHeader>
             <DialogTitle>Extracted Text Preview</DialogTitle>
             <DialogDescription>
-              Local text extracted from {previewDocumentId ? documentNameById.get(previewDocumentId) : "the selected document"}.
+              Local text extracted from{" "}
+              {previewDocumentId
+                ? documentNameById.get(previewDocumentId)
+                : "the selected document"}
+              .
             </DialogDescription>
           </DialogHeader>
-          <Textarea value={latestExtractionPreview ?? "No extracted text preview available."} readOnly className="min-h-96 font-mono text-xs" />
+          <Textarea
+            value={latestExtractionPreview ?? "No extracted text preview available."}
+            readOnly
+            className="min-h-96 font-mono text-xs"
+          />
         </DialogContent>
       </Dialog>
     </div>
