@@ -4,6 +4,7 @@ use diesel::prelude::*;
 use diesel::r2d2::{self, Pool};
 use diesel::SqliteConnection;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 use wealthfolio_device_sync::crypto::{decrypt, encrypt, sha256_checksum};
@@ -39,6 +40,7 @@ pub struct TaxRepository {
     pool: Arc<Pool<r2d2::ConnectionManager<SqliteConnection>>>,
     writer: WriteHandle,
     document_key: String,
+    documents_dir: PathBuf,
 }
 
 impl TaxRepository {
@@ -46,12 +48,62 @@ impl TaxRepository {
         pool: Arc<Pool<r2d2::ConnectionManager<SqliteConnection>>>,
         writer: WriteHandle,
         document_key: String,
+        data_root: PathBuf,
     ) -> Self {
         Self {
             pool,
             writer,
             document_key,
+            documents_dir: data_root.join("tax-documents"),
         }
+    }
+
+    fn document_blob_path(base_dir: &Path, document_id: &str) -> PathBuf {
+        base_dir.join(format!("{document_id}.enc"))
+    }
+
+    fn write_encrypted_blob(path: &Path, encrypted_content: &str) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(Error::from)?;
+        }
+        std::fs::write(path, encrypted_content).map_err(Error::from)
+    }
+
+    fn delete_encrypted_blob(path: &Path) -> Result<()> {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(Error::from(error)),
+        }
+    }
+
+    fn backfill_legacy_document_blob(
+        &self,
+        conn: &mut SqliteConnection,
+        document: &mut TaxDocumentDB,
+    ) -> Result<String> {
+        let encrypted_content = document.encrypted_content.clone();
+        if encrypted_content.is_empty() {
+            return Err(Error::Database(DatabaseError::NotFound(format!(
+                "Tax document {} content not found",
+                document.id
+            ))));
+        }
+
+        let blob_path = Self::document_blob_path(&self.documents_dir, &document.id);
+        Self::write_encrypted_blob(&blob_path, &encrypted_content)?;
+        let blob_path_str = blob_path.to_string_lossy().to_string();
+        diesel::update(tax_documents::table.find(&document.id))
+            .set((
+                tax_documents::encrypted_blob_path.eq(Some(blob_path_str.clone())),
+                tax_documents::encrypted_content.eq(String::new()),
+            ))
+            .execute(conn)
+            .map_err(StorageError::from)?;
+
+        document.encrypted_blob_path = Some(blob_path_str);
+        document.encrypted_content.clear();
+        Ok(encrypted_content)
     }
 
     fn load_report_detail(
@@ -591,30 +643,40 @@ impl TaxRepositoryTrait for TaxRepository {
         content: Vec<u8>,
     ) -> Result<TaxDocument> {
         let document_key = self.document_key.clone();
+        let documents_dir = self.documents_dir.clone();
         self.writer
             .exec_tx(move |tx| -> Result<TaxDocument> {
                 let now = chrono::Utc::now().naive_utc();
                 let plaintext = BASE64.encode(&content);
                 let encrypted_content =
                     encrypt(&document_key, &plaintext).map_err(Error::Secret)?;
+                let document_id = Uuid::new_v4().to_string();
+                let blob_path = Self::document_blob_path(&documents_dir, &document_id);
+                Self::write_encrypted_blob(&blob_path, &encrypted_content)?;
+                let blob_path_str = blob_path.to_string_lossy().to_string();
                 let document_db = TaxDocumentDB {
-                    id: Uuid::new_v4().to_string(),
+                    id: document_id,
                     report_id,
                     document_type,
                     filename,
                     mime_type,
                     sha256: sha256_checksum(&content),
-                    encrypted_content,
+                    encrypted_content: String::new(),
+                    encrypted_blob_path: Some(blob_path_str.clone()),
                     encryption_key_ref: DOCUMENT_KEY_REF.to_string(),
                     size_bytes: content.len() as i32,
                     uploaded_at: now,
                     created_at: now,
                     updated_at: now,
                 };
-                diesel::insert_into(tax_documents::table)
+                if let Err(error) = diesel::insert_into(tax_documents::table)
                     .values(&document_db)
                     .execute(tx.conn())
-                    .map_err(StorageError::from)?;
+                    .map_err(StorageError::from)
+                {
+                    let _ = Self::delete_encrypted_blob(Path::new(&blob_path_str));
+                    return Err(error.into());
+                }
                 Ok(TaxDocument::from(document_db))
             })
             .await
@@ -651,9 +713,15 @@ impl TaxRepositoryTrait for TaxRepository {
             .optional()
             .map_err(StorageError::from)?;
 
-        row.map(|document| {
+        row.map(|mut document| {
+            let encrypted_content = if let Some(blob_path) = &document.encrypted_blob_path {
+                std::fs::read_to_string(blob_path).map_err(Error::from)?
+            } else {
+                self.backfill_legacy_document_blob(&mut conn, &mut document)?
+            };
+
             let plaintext =
-                decrypt(&self.document_key, &document.encrypted_content).map_err(Error::Secret)?;
+                decrypt(&self.document_key, encrypted_content.trim()).map_err(Error::Secret)?;
             BASE64
                 .decode(plaintext)
                 .map_err(|error| Error::Unexpected(error.to_string()))
@@ -661,10 +729,41 @@ impl TaxRepositoryTrait for TaxRepository {
         .transpose()
     }
 
+    fn get_tax_document_extraction(
+        &self,
+        extraction_id: &str,
+    ) -> Result<Option<wealthfolio_core::tax::TaxDocumentExtraction>> {
+        let mut conn = get_connection(&self.pool)?;
+        let row = tax_document_extractions::table
+            .select(TaxDocumentExtractionDB::as_select())
+            .find(extraction_id)
+            .first::<TaxDocumentExtractionDB>(&mut conn)
+            .optional()
+            .map_err(StorageError::from)?;
+        Ok(row.map(Into::into))
+    }
+
+    fn get_extracted_tax_field(&self, field_id: &str) -> Result<Option<ExtractedTaxField>> {
+        let mut conn = get_connection(&self.pool)?;
+        let row = extracted_tax_fields::table
+            .select(ExtractedTaxFieldDB::as_select())
+            .find(field_id)
+            .first::<ExtractedTaxFieldDB>(&mut conn)
+            .optional()
+            .map_err(StorageError::from)?;
+        Ok(row.map(ExtractedTaxField::from))
+    }
+
     async fn delete_tax_document(&self, document_id: &str) -> Result<()> {
         let document_id = document_id.to_string();
         self.writer
             .exec_tx(move |tx| -> Result<()> {
+                let document = tax_documents::table
+                    .select(TaxDocumentDB::as_select())
+                    .find(&document_id)
+                    .first::<TaxDocumentDB>(tx.conn())
+                    .optional()
+                    .map_err(StorageError::from)?;
                 let affected = diesel::delete(tax_documents::table.find(&document_id))
                     .execute(tx.conn())
                     .map_err(StorageError::from)?;
@@ -672,6 +771,9 @@ impl TaxRepositoryTrait for TaxRepository {
                     return Err(Error::Database(DatabaseError::NotFound(format!(
                         "Tax document {document_id} not found"
                     ))));
+                }
+                if let Some(path) = document.and_then(|document| document.encrypted_blob_path) {
+                    Self::delete_encrypted_blob(Path::new(&path))?;
                 }
                 Ok(())
             })
@@ -824,6 +926,17 @@ impl TaxRepositoryTrait for TaxRepository {
             .await
     }
 
+    fn get_tax_event(&self, event_id: &str) -> Result<Option<TaxEvent>> {
+        let mut conn = get_connection(&self.pool)?;
+        let row = tax_events::table
+            .select(TaxEventDB::as_select())
+            .find(event_id)
+            .first::<TaxEventDB>(&mut conn)
+            .optional()
+            .map_err(StorageError::from)?;
+        Ok(row.map(TaxEvent::from))
+    }
+
     async fn update_tax_event(&self, update: TaxEventUpdate) -> Result<TaxEvent> {
         self.writer
             .exec_tx(move |tx| -> Result<TaxEvent> {
@@ -869,6 +982,20 @@ impl TaxRepositoryTrait for TaxRepository {
             .load::<TaxIssueDB>(&mut conn)
             .map_err(StorageError::from)?;
         Ok(rows.into_iter().map(TaxIssue::from).collect())
+    }
+
+    fn get_tax_reconciliation_entry(
+        &self,
+        entry_id: &str,
+    ) -> Result<Option<TaxReconciliationEntry>> {
+        let mut conn = get_connection(&self.pool)?;
+        let row = tax_reconciliation_entries::table
+            .select(TaxReconciliationEntryDB::as_select())
+            .find(entry_id)
+            .first::<TaxReconciliationEntryDB>(&mut conn)
+            .optional()
+            .map_err(StorageError::from)?;
+        Ok(row.map(TaxReconciliationEntry::from))
     }
 
     fn list_tax_reconciliation_entries(

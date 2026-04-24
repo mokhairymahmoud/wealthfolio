@@ -224,6 +224,7 @@ pub async fn initialize_context(
         pool.clone(),
         writer.clone(),
         tax_document_key,
+        std::path::PathBuf::from(app_data_dir),
     ));
     let tax_service = Arc::new(TaxService::new(
         tax_repository.clone(),

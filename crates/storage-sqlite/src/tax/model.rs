@@ -170,6 +170,7 @@ pub struct TaxDocumentDB {
     pub mime_type: Option<String>,
     pub sha256: String,
     pub encrypted_content: String,
+    pub encrypted_blob_path: Option<String>,
     pub encryption_key_ref: String,
     pub size_bytes: i32,
     pub uploaded_at: NaiveDateTime,

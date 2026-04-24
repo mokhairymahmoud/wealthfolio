@@ -207,6 +207,7 @@ export default function TaxesPage() {
   });
   const selectedReport = findReportForYear(reports, taxYear);
   const selectedReportId = selectedReport?.id;
+  const isReportLocked = selectedReport?.status === "FINALIZED";
 
   const { data: reportDetail, isLoading: isReportDetailLoading } = useQuery({
     queryKey: [QueryKeys.TAX_REPORT_DETAIL, selectedReportId],
@@ -558,12 +559,13 @@ export default function TaxesPage() {
                   className="border-input bg-background h-9 rounded-md border px-3 py-1 text-sm"
                   type="file"
                   accept=".pdf,.txt,.csv,text/*,application/pdf"
+                  disabled={isReportLocked}
                   onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
                 />
                 <Button
                   size="sm"
                   onClick={() => uploadDocumentMutation.mutate()}
-                  disabled={!selectedFile || uploadDocumentMutation.isPending}
+                  disabled={!selectedFile || uploadDocumentMutation.isPending || isReportLocked}
                 >
                   {uploadDocumentMutation.isPending ? (
                     <Icons.Spinner className="h-4 w-4 animate-spin" />
@@ -658,7 +660,11 @@ export default function TaxesPage() {
                           size="sm"
                           variant="outline"
                           onClick={() => confirmFieldMutation.mutate(field.id)}
-                          disabled={field.status === "CONFIRMED" || confirmFieldMutation.isPending}
+                          disabled={
+                            field.status === "CONFIRMED" ||
+                            confirmFieldMutation.isPending ||
+                            isReportLocked
+                          }
                         >
                           Confirm
                         </Button>
@@ -707,12 +713,12 @@ export default function TaxesPage() {
           <CardHeader>
             <CardTitle className="flex items-center justify-between gap-2">
               <span>Declaration Helper</span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => selectedReport && reconcileReportMutation.mutate(selectedReport.id)}
-                disabled={!selectedReport || reconcileReportMutation.isPending}
-              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => selectedReport && reconcileReportMutation.mutate(selectedReport.id)}
+                  disabled={!selectedReport || reconcileReportMutation.isPending || isReportLocked}
+                >
                 {reconcileReportMutation.isPending ? (
                   <Icons.Spinner className="h-4 w-4 animate-spin" />
                 ) : (

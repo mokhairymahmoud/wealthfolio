@@ -62,6 +62,73 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
         Error::Validation(ValidationError::InvalidInput(message.into()))
     }
 
+    fn invalid_input(message: impl Into<String>) -> Error {
+        Error::Validation(ValidationError::InvalidInput(message.into()))
+    }
+
+    fn ensure_report_editable(report: &TaxYearReport) -> Result<()> {
+        if report.status == TaxReportStatus::Finalized {
+            return Err(Self::invalid_input(format!(
+                "Tax report {} is finalized and read-only",
+                report.id
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn editable_report_by_id(&self, report_id: &str) -> Result<TaxYearReport> {
+        let report = self
+            .repository
+            .get_tax_year_report(report_id)?
+            .ok_or_else(|| Self::not_found(format!("Tax report {report_id} not found")))?;
+        Self::ensure_report_editable(&report)?;
+        Ok(report)
+    }
+
+    fn editable_report_for_document(&self, document_id: &str) -> Result<TaxYearReport> {
+        let document = self
+            .repository
+            .get_tax_document(document_id)?
+            .ok_or_else(|| Self::not_found(format!("Tax document {document_id} not found")))?;
+        self.editable_report_by_id(&document.report_id)
+    }
+
+    fn editable_report_for_extracted_field(&self, field_id: &str) -> Result<TaxYearReport> {
+        let field = self
+            .repository
+            .get_extracted_tax_field(field_id)?
+            .ok_or_else(|| Self::not_found(format!("Extracted tax field {field_id} not found")))?;
+        let extraction = self
+            .repository
+            .get_tax_document_extraction(&field.extraction_id)?
+            .ok_or_else(|| {
+                Self::not_found(format!(
+                    "Tax document extraction {} not found",
+                    field.extraction_id
+                ))
+            })?;
+        self.editable_report_for_document(&extraction.document_id)
+    }
+
+    fn editable_report_for_reconciliation_entry(&self, entry_id: &str) -> Result<TaxYearReport> {
+        let entry = self
+            .repository
+            .get_tax_reconciliation_entry(entry_id)?
+            .ok_or_else(|| {
+                Self::not_found(format!("Tax reconciliation entry {entry_id} not found"))
+            })?;
+        self.editable_report_by_id(&entry.report_id)
+    }
+
+    fn editable_report_for_tax_event(&self, event_id: &str) -> Result<TaxYearReport> {
+        let event = self
+            .repository
+            .get_tax_event(event_id)?
+            .ok_or_else(|| Self::not_found(format!("Tax event {event_id} not found")))?;
+        self.editable_report_by_id(&event.report_id)
+    }
+
     fn amount_eur(activity: &Activity, amount: Decimal) -> Option<Decimal> {
         if activity.currency.eq_ignore_ascii_case("EUR") {
             return Some(amount);
@@ -421,10 +488,7 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
 
         let mut document_totals: HashMap<String, Decimal> = HashMap::new();
         for field in extracted_fields {
-            if !matches!(
-                field.status.as_str(),
-                "CONFIRMED" | "CORRECTED" | "SUGGESTED"
-            ) {
+            if !matches!(field.status.as_str(), "CONFIRMED" | "CORRECTED") {
                 continue;
             }
             let Some(category) = field.mapped_category.clone() else {
@@ -646,6 +710,29 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
     }
 
     async fn finalize_tax_year_report(&self, id: &str) -> Result<TaxYearReport> {
+        let report = self
+            .repository
+            .get_tax_year_report(id)?
+            .ok_or_else(|| Self::not_found(format!("Tax report {id} not found")))?;
+        if report.status == TaxReportStatus::Finalized {
+            return Err(Self::invalid_input(format!(
+                "Tax report {id} is already finalized"
+            )));
+        }
+
+        let has_blocking_issues = self
+            .repository
+            .list_tax_issues(id)?
+            .into_iter()
+            .any(|issue| {
+                issue.resolved_at.is_none() && issue.severity.eq_ignore_ascii_case("ERROR")
+            });
+        if has_blocking_issues {
+            return Err(Self::invalid_input(
+                "Tax report has unresolved blocking issues and cannot be finalized",
+            ));
+        }
+
         self.repository.finalize_tax_year_report(id).await
     }
 
@@ -666,6 +753,7 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
                 "content".to_string(),
             )));
         }
+        self.editable_report_by_id(&upload.report_id)?;
         self.repository
             .upload_tax_document(
                 upload.report_id,
@@ -682,21 +770,7 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
     }
 
     async fn delete_tax_document(&self, document_id: &str) -> Result<()> {
-        let document = self
-            .repository
-            .get_tax_document(document_id)?
-            .ok_or_else(|| Self::not_found(format!("Tax document {document_id} not found")))?;
-        let report = self
-            .repository
-            .get_tax_year_report(&document.report_id)?
-            .ok_or_else(|| {
-                Self::not_found(format!("Tax report {} not found", document.report_id))
-            })?;
-        if report.status == TaxReportStatus::Finalized {
-            return Err(Self::not_found(
-                "Documents on finalized tax reports cannot be deleted",
-            ));
-        }
+        self.editable_report_for_document(document_id)?;
         self.repository.delete_tax_document(document_id).await
     }
 
@@ -725,6 +799,7 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
                 "Cloud AI extraction requires explicit consent.".to_string(),
             )));
         }
+        self.editable_report_for_document(&request.document_id)?;
         let content = self
             .repository
             .get_tax_document_content(&request.document_id)?
@@ -743,10 +818,12 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         &self,
         update: ExtractedTaxFieldUpdate,
     ) -> Result<ExtractedTaxField> {
+        self.editable_report_for_extracted_field(&update.field_id)?;
         self.repository.update_extracted_tax_field(update).await
     }
 
     async fn reconcile_tax_year_report(&self, id: &str) -> Result<Vec<TaxReconciliationEntry>> {
+        self.editable_report_by_id(id)?;
         let events = self.repository.list_tax_events(id)?;
         let compiled_events: Vec<CompiledTaxEvent> = events
             .into_iter()
@@ -783,12 +860,768 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         &self,
         update: TaxReconciliationEntryUpdate,
     ) -> Result<TaxReconciliationEntry> {
+        self.editable_report_for_reconciliation_entry(&update.id)?;
         self.repository
             .update_tax_reconciliation_entry(update)
             .await
     }
 
     async fn update_tax_event(&self, update: TaxEventUpdate) -> Result<TaxEvent> {
+        self.editable_report_for_tax_event(&update.id)?;
         self.repository.update_tax_event(update).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::activities::{
+        Activity, ActivityBulkMutationRequest, ActivityBulkMutationResult, ActivityImport,
+        ActivitySearchResponse, ActivitySearchResponseMeta, ActivityServiceTrait, ActivityUpdate,
+        ActivityUpsert, BrokerSyncProfileData, BulkUpsertResult, ImportActivitiesResult,
+        ImportAssetCandidate, ImportAssetPreviewItem, ImportMappingData, ImportTemplateData,
+        NewActivity, PrepareActivitiesResult, SaveBrokerSyncProfileRulesRequest, Sort,
+    };
+    use crate::tax::TaxIssue;
+    use async_trait::async_trait;
+    use chrono::{DateTime, NaiveDate, Utc};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, RwLock};
+
+    struct MockActivityService;
+
+    #[async_trait]
+    impl ActivityServiceTrait for MockActivityService {
+        fn get_activity(&self, _activity_id: &str) -> Result<Activity> {
+            unimplemented!()
+        }
+
+        fn get_activities(&self) -> Result<Vec<Activity>> {
+            Ok(Vec::new())
+        }
+
+        fn get_activities_by_account_id(&self, _account_id: &str) -> Result<Vec<Activity>> {
+            unimplemented!()
+        }
+
+        fn get_activities_by_account_ids(&self, _account_ids: &[String]) -> Result<Vec<Activity>> {
+            unimplemented!()
+        }
+
+        fn get_trading_activities(&self) -> Result<Vec<Activity>> {
+            unimplemented!()
+        }
+
+        fn get_income_activities(&self) -> Result<Vec<Activity>> {
+            unimplemented!()
+        }
+
+        fn search_activities(
+            &self,
+            _page: i64,
+            _page_size: i64,
+            _account_id_filter: Option<Vec<String>>,
+            _activity_type_filter: Option<Vec<String>>,
+            _asset_id_keyword: Option<String>,
+            _sort: Option<Sort>,
+            _needs_review_filter: Option<bool>,
+            _date_from: Option<NaiveDate>,
+            _date_to: Option<NaiveDate>,
+            _instrument_type_filter: Option<Vec<String>>,
+        ) -> Result<ActivitySearchResponse> {
+            Ok(ActivitySearchResponse {
+                data: Vec::new(),
+                meta: ActivitySearchResponseMeta { total_row_count: 0 },
+            })
+        }
+
+        fn get_first_activity_date(
+            &self,
+            _account_ids: Option<&[String]>,
+        ) -> Result<Option<DateTime<Utc>>> {
+            unimplemented!()
+        }
+
+        fn get_import_mapping(
+            &self,
+            _account_id: String,
+            _context_kind: String,
+        ) -> Result<ImportMappingData> {
+            unimplemented!()
+        }
+
+        fn list_import_templates(&self) -> Result<Vec<ImportTemplateData>> {
+            unimplemented!()
+        }
+
+        fn get_import_template(&self, _template_id: String) -> Result<ImportTemplateData> {
+            unimplemented!()
+        }
+
+        async fn create_activity(&self, _activity: NewActivity) -> Result<Activity> {
+            unimplemented!()
+        }
+
+        async fn update_activity(&self, _activity: ActivityUpdate) -> Result<Activity> {
+            unimplemented!()
+        }
+
+        async fn delete_activity(&self, _activity_id: String) -> Result<Activity> {
+            unimplemented!()
+        }
+
+        async fn bulk_mutate_activities(
+            &self,
+            _request: ActivityBulkMutationRequest,
+        ) -> Result<ActivityBulkMutationResult> {
+            unimplemented!()
+        }
+
+        async fn check_activities_import(
+            &self,
+            _activities: Vec<ActivityImport>,
+        ) -> Result<Vec<ActivityImport>> {
+            unimplemented!()
+        }
+
+        async fn preview_import_assets(
+            &self,
+            _candidates: Vec<ImportAssetCandidate>,
+        ) -> Result<Vec<ImportAssetPreviewItem>> {
+            unimplemented!()
+        }
+
+        async fn import_activities(
+            &self,
+            _activities: Vec<ActivityImport>,
+        ) -> Result<ImportActivitiesResult> {
+            unimplemented!()
+        }
+
+        async fn link_account_template(
+            &self,
+            _account_id: String,
+            _template_id: String,
+            _context_kind: String,
+        ) -> Result<()> {
+            unimplemented!()
+        }
+
+        async fn save_import_mapping(
+            &self,
+            _mapping_data: ImportMappingData,
+        ) -> Result<ImportMappingData> {
+            unimplemented!()
+        }
+
+        async fn save_import_template(
+            &self,
+            _template_data: ImportTemplateData,
+        ) -> Result<ImportTemplateData> {
+            unimplemented!()
+        }
+
+        async fn delete_import_template(&self, _template_id: String) -> Result<()> {
+            unimplemented!()
+        }
+
+        fn check_existing_duplicates(
+            &self,
+            _idempotency_keys: Vec<String>,
+        ) -> Result<HashMap<String, String>> {
+            unimplemented!()
+        }
+
+        fn parse_csv(
+            &self,
+            _content: &[u8],
+            _config: &crate::activities::ParseConfig,
+        ) -> Result<crate::activities::ParsedCsvResult> {
+            unimplemented!()
+        }
+
+        async fn upsert_activities_bulk(
+            &self,
+            _activities: Vec<ActivityUpsert>,
+        ) -> Result<BulkUpsertResult> {
+            unimplemented!()
+        }
+
+        async fn prepare_activities_for_save(
+            &self,
+            _activities: Vec<NewActivity>,
+            _account: &crate::accounts::Account,
+        ) -> Result<PrepareActivitiesResult> {
+            unimplemented!()
+        }
+
+        async fn prepare_activities_for_import(
+            &self,
+            _activities: Vec<NewActivity>,
+            _account: &crate::accounts::Account,
+        ) -> Result<PrepareActivitiesResult> {
+            unimplemented!()
+        }
+
+        async fn prepare_activities_for_sync(
+            &self,
+            _activities: Vec<NewActivity>,
+            _account: &crate::accounts::Account,
+        ) -> Result<PrepareActivitiesResult> {
+            unimplemented!()
+        }
+
+        fn get_broker_sync_profile(
+            &self,
+            _account_id: String,
+            _source_system: String,
+        ) -> Result<BrokerSyncProfileData> {
+            unimplemented!()
+        }
+
+        async fn save_broker_sync_profile_rules(
+            &self,
+            _request: SaveBrokerSyncProfileRulesRequest,
+        ) -> Result<BrokerSyncProfileData> {
+            unimplemented!()
+        }
+    }
+
+    struct MockTaxRepository {
+        reports: RwLock<HashMap<String, TaxYearReport>>,
+        issues_by_report: RwLock<HashMap<String, Vec<TaxIssue>>>,
+        documents: RwLock<HashMap<String, TaxDocument>>,
+        extractions: RwLock<HashMap<String, crate::tax::TaxDocumentExtraction>>,
+        fields: RwLock<HashMap<String, ExtractedTaxField>>,
+        reconciliation_entries: RwLock<HashMap<String, TaxReconciliationEntry>>,
+        events: RwLock<HashMap<String, TaxEvent>>,
+        amended_from: Mutex<Vec<String>>,
+    }
+
+    impl MockTaxRepository {
+        fn new(report: TaxYearReport) -> Self {
+            let report_id = report.id.clone();
+            let mut reports = HashMap::new();
+            reports.insert(report_id.clone(), report);
+            let mut issues_by_report = HashMap::new();
+            issues_by_report.insert(report_id, Vec::new());
+
+            Self {
+                reports: RwLock::new(reports),
+                issues_by_report: RwLock::new(issues_by_report),
+                documents: RwLock::new(HashMap::new()),
+                extractions: RwLock::new(HashMap::new()),
+                fields: RwLock::new(HashMap::new()),
+                reconciliation_entries: RwLock::new(HashMap::new()),
+                events: RwLock::new(HashMap::new()),
+                amended_from: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn add_issue(&self, issue: TaxIssue) {
+            self.issues_by_report
+                .write()
+                .unwrap()
+                .entry(issue.report_id.clone())
+                .or_default()
+                .push(issue);
+        }
+
+        fn add_document(&self, document: TaxDocument) {
+            self.documents
+                .write()
+                .unwrap()
+                .insert(document.id.clone(), document);
+        }
+
+        fn add_extraction(&self, extraction: crate::tax::TaxDocumentExtraction) {
+            self.extractions
+                .write()
+                .unwrap()
+                .insert(extraction.id.clone(), extraction);
+        }
+
+        fn add_field(&self, field: ExtractedTaxField) {
+            self.fields.write().unwrap().insert(field.id.clone(), field);
+        }
+
+        fn add_reconciliation_entry(&self, entry: TaxReconciliationEntry) {
+            self.reconciliation_entries
+                .write()
+                .unwrap()
+                .insert(entry.id.clone(), entry);
+        }
+
+        fn add_event(&self, event: TaxEvent) {
+            self.events.write().unwrap().insert(event.id.clone(), event);
+        }
+    }
+
+    #[async_trait]
+    impl TaxRepositoryTrait for MockTaxRepository {
+        fn get_tax_profile(&self) -> Result<Option<TaxProfile>> {
+            unimplemented!()
+        }
+
+        async fn upsert_tax_profile(&self, _profile: TaxProfileUpdate) -> Result<TaxProfile> {
+            unimplemented!()
+        }
+
+        fn get_account_tax_profiles(&self) -> Result<Vec<AccountTaxProfile>> {
+            Ok(Vec::new())
+        }
+
+        fn get_account_tax_profile(&self, _account_id: &str) -> Result<Option<AccountTaxProfile>> {
+            Ok(None)
+        }
+
+        async fn upsert_account_tax_profile(
+            &self,
+            _profile: AccountTaxProfileUpdate,
+        ) -> Result<AccountTaxProfile> {
+            unimplemented!()
+        }
+
+        fn list_tax_year_reports(&self) -> Result<Vec<TaxYearReport>> {
+            Ok(self.reports.read().unwrap().values().cloned().collect())
+        }
+
+        fn get_tax_year_report(&self, id: &str) -> Result<Option<TaxYearReport>> {
+            Ok(self.reports.read().unwrap().get(id).cloned())
+        }
+
+        fn find_draft_tax_year_report(
+            &self,
+            _tax_year: i32,
+            _jurisdiction: &str,
+        ) -> Result<Option<TaxYearReport>> {
+            Ok(None)
+        }
+
+        async fn create_tax_year_report(
+            &self,
+            _report: NewTaxYearReport,
+            _jurisdiction: String,
+            _base_currency: String,
+            _rule_pack_version: String,
+        ) -> Result<TaxYearReport> {
+            unimplemented!()
+        }
+
+        async fn create_amended_report(&self, parent: TaxYearReport) -> Result<TaxYearReport> {
+            self.amended_from.lock().unwrap().push(parent.id.clone());
+            let amended = make_report("amended-report", TaxReportStatus::AmendedDraft);
+            let amended = TaxYearReport {
+                parent_report_id: Some(parent.id),
+                ..amended
+            };
+            self.reports
+                .write()
+                .unwrap()
+                .insert(amended.id.clone(), amended.clone());
+            Ok(amended)
+        }
+
+        async fn replace_generated_report_data(
+            &self,
+            _report_id: &str,
+            _summary_json: String,
+            _events: Vec<CompiledTaxEvent>,
+            _issues: Vec<NewTaxIssue>,
+            _reconciliation: Vec<NewTaxReconciliationEntry>,
+        ) -> Result<TaxReportDetail> {
+            unimplemented!()
+        }
+
+        async fn finalize_tax_year_report(&self, report_id: &str) -> Result<TaxYearReport> {
+            let mut reports = self.reports.write().unwrap();
+            let report = reports.get_mut(report_id).expect("report exists");
+            report.status = TaxReportStatus::Finalized;
+            Ok(report.clone())
+        }
+
+        fn get_tax_report_detail(&self, _report_id: &str) -> Result<Option<TaxReportDetail>> {
+            unimplemented!()
+        }
+
+        async fn upload_tax_document(
+            &self,
+            _report_id: String,
+            _document_type: String,
+            _filename: String,
+            _mime_type: Option<String>,
+            _content: Vec<u8>,
+        ) -> Result<TaxDocument> {
+            panic!("upload_tax_document should not be called in these tests")
+        }
+
+        fn list_tax_documents(&self, _report_id: &str) -> Result<Vec<TaxDocument>> {
+            Ok(Vec::new())
+        }
+
+        fn get_tax_document(&self, document_id: &str) -> Result<Option<TaxDocument>> {
+            Ok(self.documents.read().unwrap().get(document_id).cloned())
+        }
+
+        fn get_tax_document_content(&self, _document_id: &str) -> Result<Option<Vec<u8>>> {
+            unimplemented!()
+        }
+
+        fn get_tax_document_extraction(
+            &self,
+            extraction_id: &str,
+        ) -> Result<Option<crate::tax::TaxDocumentExtraction>> {
+            Ok(self.extractions.read().unwrap().get(extraction_id).cloned())
+        }
+
+        fn get_extracted_tax_field(&self, field_id: &str) -> Result<Option<ExtractedTaxField>> {
+            Ok(self.fields.read().unwrap().get(field_id).cloned())
+        }
+
+        async fn delete_tax_document(&self, _document_id: &str) -> Result<()> {
+            panic!("delete_tax_document should not be called in these tests")
+        }
+
+        async fn create_tax_document_extraction(
+            &self,
+            _request: TaxDocumentExtractionRequest,
+            _raw_text_preview: Option<String>,
+            _fields: Vec<crate::tax::NewExtractedTaxField>,
+        ) -> Result<TaxDocumentExtractionResult> {
+            panic!("create_tax_document_extraction should not be called in these tests")
+        }
+
+        fn list_tax_document_extractions(
+            &self,
+            _report_id: &str,
+        ) -> Result<Vec<TaxDocumentExtractionResult>> {
+            Ok(Vec::new())
+        }
+
+        async fn update_extracted_tax_field(
+            &self,
+            _update: ExtractedTaxFieldUpdate,
+        ) -> Result<ExtractedTaxField> {
+            panic!("update_extracted_tax_field should not be called in these tests")
+        }
+
+        async fn replace_reconciliation_entries(
+            &self,
+            _report_id: &str,
+            _entries: Vec<NewTaxReconciliationEntry>,
+        ) -> Result<Vec<TaxReconciliationEntry>> {
+            panic!("replace_reconciliation_entries should not be called in these tests")
+        }
+
+        async fn update_tax_reconciliation_entry(
+            &self,
+            _update: TaxReconciliationEntryUpdate,
+        ) -> Result<TaxReconciliationEntry> {
+            panic!("update_tax_reconciliation_entry should not be called in these tests")
+        }
+
+        fn get_tax_event(&self, event_id: &str) -> Result<Option<TaxEvent>> {
+            Ok(self.events.read().unwrap().get(event_id).cloned())
+        }
+
+        async fn update_tax_event(&self, _update: TaxEventUpdate) -> Result<TaxEvent> {
+            panic!("update_tax_event should not be called in these tests")
+        }
+
+        fn list_tax_events(&self, _report_id: &str) -> Result<Vec<TaxEvent>> {
+            Ok(Vec::new())
+        }
+
+        fn list_tax_issues(&self, report_id: &str) -> Result<Vec<TaxIssue>> {
+            Ok(self
+                .issues_by_report
+                .read()
+                .unwrap()
+                .get(report_id)
+                .cloned()
+                .unwrap_or_default())
+        }
+
+        fn get_tax_reconciliation_entry(
+            &self,
+            entry_id: &str,
+        ) -> Result<Option<TaxReconciliationEntry>> {
+            Ok(self
+                .reconciliation_entries
+                .read()
+                .unwrap()
+                .get(entry_id)
+                .cloned())
+        }
+
+        fn list_tax_reconciliation_entries(
+            &self,
+            _report_id: &str,
+        ) -> Result<Vec<TaxReconciliationEntry>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn make_report(id: &str, status: TaxReportStatus) -> TaxYearReport {
+        let now = Utc::now().naive_utc();
+        TaxYearReport {
+            id: id.to_string(),
+            tax_year: 2025,
+            jurisdiction: DEFAULT_TAX_JURISDICTION.to_string(),
+            status,
+            rule_pack_version: "FR-2025-securities-v1".to_string(),
+            base_currency: "EUR".to_string(),
+            generated_at: Some(now),
+            finalized_at: None,
+            assumptions_json: "{}".to_string(),
+            summary_json: "{}".to_string(),
+            parent_report_id: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn make_event(report_id: &str) -> TaxEvent {
+        let now = Utc::now().naive_utc();
+        TaxEvent {
+            id: "event-1".to_string(),
+            report_id: report_id.to_string(),
+            event_type: TaxEventType::DividendReceived,
+            category: CATEGORY_DIVIDENDS.to_string(),
+            suggested_box: Some("2042-2DC".to_string()),
+            account_id: "account-1".to_string(),
+            asset_id: None,
+            activity_id: Some("activity-1".to_string()),
+            event_date: "2025-01-15".to_string(),
+            amount_currency: "EUR".to_string(),
+            amount_local: Some(Decimal::ONE),
+            amount_eur: Some(Decimal::ONE),
+            taxable_amount_eur: Some(Decimal::ONE),
+            expenses_eur: None,
+            confidence: TaxConfidence::High,
+            included: true,
+            notes: None,
+            user_override: false,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn make_issue(report_id: &str, severity: &str) -> TaxIssue {
+        TaxIssue {
+            id: format!("issue-{severity}"),
+            report_id: report_id.to_string(),
+            severity: severity.to_string(),
+            code: "TEST".to_string(),
+            message: "test issue".to_string(),
+            account_id: None,
+            activity_id: None,
+            tax_event_id: None,
+            resolved_at: None,
+            created_at: Utc::now().naive_utc(),
+        }
+    }
+
+    fn make_document(report_id: &str) -> TaxDocument {
+        let now = Utc::now().naive_utc();
+        TaxDocument {
+            id: "document-1".to_string(),
+            report_id: report_id.to_string(),
+            document_type: "IFU".to_string(),
+            filename: "ifu.pdf".to_string(),
+            mime_type: Some("application/pdf".to_string()),
+            sha256: "hash".to_string(),
+            size_bytes: 128,
+            uploaded_at: now,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn make_extraction() -> crate::tax::TaxDocumentExtraction {
+        let now = Utc::now().naive_utc();
+        crate::tax::TaxDocumentExtraction {
+            id: "extraction-1".to_string(),
+            document_id: "document-1".to_string(),
+            method: "LOCAL_TEXT".to_string(),
+            status: "READY_FOR_REVIEW".to_string(),
+            consent_granted: false,
+            raw_text_preview: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn make_field() -> ExtractedTaxField {
+        let now = Utc::now().naive_utc();
+        ExtractedTaxField {
+            id: "field-1".to_string(),
+            extraction_id: "extraction-1".to_string(),
+            field_key: CATEGORY_DIVIDENDS.to_string(),
+            label: "Dividends".to_string(),
+            mapped_category: Some(CATEGORY_DIVIDENDS.to_string()),
+            value_text: Some("Dividends 10".to_string()),
+            amount_eur: Some(Decimal::from(10u32)),
+            confidence: 0.9,
+            status: "SUGGESTED".to_string(),
+            confirmed_amount_eur: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn make_reconciliation_entry(report_id: &str) -> TaxReconciliationEntry {
+        let now = Utc::now().naive_utc();
+        TaxReconciliationEntry {
+            id: "reconciliation-1".to_string(),
+            report_id: report_id.to_string(),
+            category: CATEGORY_DIVIDENDS.to_string(),
+            suggested_box: Some("2042-2DC".to_string()),
+            app_amount_eur: Some(Decimal::from(10u32)),
+            document_amount_eur: Some(Decimal::from(10u32)),
+            selected_amount_eur: Some(Decimal::from(10u32)),
+            delta_eur: Some(Decimal::ZERO),
+            status: "MATCHED".to_string(),
+            notes: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn make_compiled_dividend_event() -> CompiledTaxEvent {
+        CompiledTaxEvent {
+            event: NewTaxEvent {
+                event_type: TaxEventType::DividendReceived,
+                category: CATEGORY_DIVIDENDS.to_string(),
+                suggested_box: Some("2042-2DC".to_string()),
+                account_id: "account-1".to_string(),
+                asset_id: None,
+                activity_id: Some("activity-1".to_string()),
+                event_date: "2025-01-15".to_string(),
+                amount_currency: "EUR".to_string(),
+                amount_local: Some(Decimal::ONE),
+                amount_eur: Some(Decimal::ONE),
+                taxable_amount_eur: Some(Decimal::ONE),
+                expenses_eur: None,
+                confidence: TaxConfidence::High,
+                included: true,
+                notes: None,
+            },
+            sources: Vec::new(),
+            lot_allocations: Vec::new(),
+        }
+    }
+
+    fn service_with_repo(repo: Arc<MockTaxRepository>) -> TaxService<MockTaxRepository> {
+        TaxService::new(repo, Arc::new(MockActivityService))
+    }
+
+    #[tokio::test]
+    async fn update_tax_event_rejects_finalized_report() {
+        let report = make_report("report-1", TaxReportStatus::Finalized);
+        let repo = Arc::new(MockTaxRepository::new(report.clone()));
+        repo.add_event(make_event(&report.id));
+        let service = service_with_repo(repo);
+
+        let err = service
+            .update_tax_event(TaxEventUpdate {
+                id: "event-1".to_string(),
+                included: true,
+                taxable_amount_eur: Some(Decimal::ONE),
+                notes: None,
+            })
+            .await
+            .expect_err("finalized report should reject event edits");
+
+        assert!(err.to_string().contains("read-only"));
+    }
+
+    #[tokio::test]
+    async fn update_extracted_tax_field_rejects_finalized_report() {
+        let report = make_report("report-1", TaxReportStatus::Finalized);
+        let repo = Arc::new(MockTaxRepository::new(report.clone()));
+        repo.add_document(make_document(&report.id));
+        repo.add_extraction(make_extraction());
+        repo.add_field(make_field());
+        let service = service_with_repo(repo);
+
+        let err = service
+            .update_extracted_tax_field(ExtractedTaxFieldUpdate {
+                field_id: "field-1".to_string(),
+                status: "CONFIRMED".to_string(),
+                confirmed_amount_eur: Some(Decimal::TEN),
+            })
+            .await
+            .expect_err("finalized report should reject extracted field edits");
+
+        assert!(err.to_string().contains("read-only"));
+    }
+
+    #[tokio::test]
+    async fn reconcile_rejects_finalized_report() {
+        let report = make_report("report-1", TaxReportStatus::Finalized);
+        let repo = Arc::new(MockTaxRepository::new(report.clone()));
+        repo.add_reconciliation_entry(make_reconciliation_entry(&report.id));
+        let service = service_with_repo(repo);
+
+        let err = service
+            .reconcile_tax_year_report(&report.id)
+            .await
+            .expect_err("finalized report should reject reconciliation regeneration");
+
+        assert!(err.to_string().contains("read-only"));
+    }
+
+    #[tokio::test]
+    async fn finalize_rejects_reports_with_blocking_issues() {
+        let report = make_report("report-1", TaxReportStatus::Draft);
+        let repo = Arc::new(MockTaxRepository::new(report.clone()));
+        repo.add_issue(make_issue(&report.id, "ERROR"));
+        let service = service_with_repo(repo);
+
+        let err = service
+            .finalize_tax_year_report(&report.id)
+            .await
+            .expect_err("blocking issues should prevent finalization");
+
+        assert!(err.to_string().contains("blocking issues"));
+    }
+
+    #[tokio::test]
+    async fn amend_creates_amended_draft_from_finalized_report() {
+        let report = make_report("report-1", TaxReportStatus::Finalized);
+        let repo = Arc::new(MockTaxRepository::new(report.clone()));
+        let service = service_with_repo(repo.clone());
+
+        let amended = service
+            .amend_tax_year_report(&report.id)
+            .await
+            .expect("finalized report should allow amendment");
+
+        assert_eq!(amended.status, TaxReportStatus::AmendedDraft);
+        assert_eq!(
+            amended.parent_report_id.as_deref(),
+            Some(report.id.as_str())
+        );
+        assert_eq!(repo.amended_from.lock().unwrap().as_slice(), &[report.id]);
+    }
+
+    #[test]
+    fn reconciliation_ignores_suggested_fields_until_confirmed() {
+        let report = make_report("report-1", TaxReportStatus::Draft);
+        let repo = Arc::new(MockTaxRepository::new(report));
+        let service = service_with_repo(repo);
+
+        let entries = service.build_reconciliation(
+            "report-1",
+            &[make_compiled_dividend_event()],
+            &[make_field()],
+        );
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].app_amount_eur, Some(Decimal::ONE));
+        assert_eq!(entries[0].document_amount_eur, None);
+        assert_eq!(entries[0].selected_amount_eur, Some(Decimal::ONE));
+        assert_eq!(entries[0].status, "APP_ONLY");
     }
 }

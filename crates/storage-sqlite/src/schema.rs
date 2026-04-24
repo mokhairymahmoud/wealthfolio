@@ -550,6 +550,7 @@ diesel::table! {
         mime_type -> Nullable<Text>,
         sha256 -> Text,
         encrypted_content -> Text,
+        encrypted_blob_path -> Nullable<Text>,
         encryption_key_ref -> Text,
         size_bytes -> Integer,
         uploaded_at -> Timestamp,

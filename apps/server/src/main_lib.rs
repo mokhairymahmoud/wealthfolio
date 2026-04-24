@@ -396,6 +396,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         pool.clone(),
         writer.clone(),
         tax_document_key,
+        data_root_path.clone(),
     ));
     let tax_service: Arc<dyn TaxServiceTrait + Send + Sync> =
         Arc::new(TaxService::new(tax_repository, activity_service.clone()));

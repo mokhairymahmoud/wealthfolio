@@ -4,9 +4,9 @@ use crate::errors::Result;
 use crate::tax::{
     AccountTaxProfile, AccountTaxProfileUpdate, CompiledTaxEvent, ExtractedTaxField,
     ExtractedTaxFieldUpdate, NewTaxIssue, NewTaxReconciliationEntry, NewTaxYearReport, TaxDocument,
-    TaxDocumentDownload, TaxDocumentExtractionRequest, TaxDocumentExtractionResult, TaxEvent,
-    TaxEventUpdate, TaxIssue, TaxProfile, TaxProfileUpdate, TaxReconciliationEntry,
-    TaxReconciliationEntryUpdate, TaxReportDetail, TaxYearReport,
+    TaxDocumentDownload, TaxDocumentExtraction, TaxDocumentExtractionRequest,
+    TaxDocumentExtractionResult, TaxEvent, TaxEventUpdate, TaxIssue, TaxProfile, TaxProfileUpdate,
+    TaxReconciliationEntry, TaxReconciliationEntryUpdate, TaxReportDetail, TaxYearReport,
 };
 
 #[async_trait]
@@ -58,6 +58,11 @@ pub trait TaxRepositoryTrait: Send + Sync {
     fn list_tax_documents(&self, report_id: &str) -> Result<Vec<TaxDocument>>;
     fn get_tax_document(&self, document_id: &str) -> Result<Option<TaxDocument>>;
     fn get_tax_document_content(&self, document_id: &str) -> Result<Option<Vec<u8>>>;
+    fn get_tax_document_extraction(
+        &self,
+        extraction_id: &str,
+    ) -> Result<Option<TaxDocumentExtraction>>;
+    fn get_extracted_tax_field(&self, field_id: &str) -> Result<Option<ExtractedTaxField>>;
     async fn delete_tax_document(&self, document_id: &str) -> Result<()>;
     async fn create_tax_document_extraction(
         &self,
@@ -83,10 +88,15 @@ pub trait TaxRepositoryTrait: Send + Sync {
         update: TaxReconciliationEntryUpdate,
     ) -> Result<TaxReconciliationEntry>;
 
+    fn get_tax_event(&self, event_id: &str) -> Result<Option<TaxEvent>>;
     async fn update_tax_event(&self, update: TaxEventUpdate) -> Result<TaxEvent>;
 
     fn list_tax_events(&self, report_id: &str) -> Result<Vec<TaxEvent>>;
     fn list_tax_issues(&self, report_id: &str) -> Result<Vec<TaxIssue>>;
+    fn get_tax_reconciliation_entry(
+        &self,
+        entry_id: &str,
+    ) -> Result<Option<TaxReconciliationEntry>>;
     fn list_tax_reconciliation_entries(
         &self,
         report_id: &str,
