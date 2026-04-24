@@ -13,12 +13,12 @@ use crate::errors::{Error, Result, ValidationError};
 use crate::tax::{
     AccountTaxProfile, AccountTaxProfileUpdate, CompiledTaxEvent, ExtractedTaxField,
     ExtractedTaxFieldUpdate, NewExtractedTaxField, NewTaxEvent, NewTaxEventSource, NewTaxIssue,
-    NewTaxLotAllocation, NewTaxReconciliationEntry, NewTaxYearReport, TaxConfidence, TaxDocument,
-    TaxDocumentDownload, TaxDocumentExtractionRequest, TaxDocumentExtractionResult,
-    TaxDocumentUpload, TaxEvent, TaxEventType, TaxEventUpdate, TaxProfile, TaxProfileUpdate,
-    TaxReconciliationEntry, TaxReconciliationEntryUpdate, TaxReportDetail, TaxReportStatus,
-    TaxRepositoryTrait, TaxServiceTrait, TaxYearReport, DEFAULT_TAX_JURISDICTION,
-    DEFAULT_TAX_REGIME,
+    NewTaxLotAllocation, NewTaxReconciliationEntry, NewTaxYearReport, TaxCloudExtractionTrait,
+    TaxConfidence, TaxDocument, TaxDocumentDownload, TaxDocumentExtractionRequest,
+    TaxDocumentExtractionResult, TaxDocumentUpload, TaxEvent, TaxEventType, TaxEventUpdate,
+    TaxProfile, TaxProfileUpdate, TaxReconciliationEntry, TaxReconciliationEntryUpdate,
+    TaxReportDetail, TaxReportStatus, TaxRepositoryTrait, TaxServiceTrait, TaxYearReport,
+    DEFAULT_TAX_JURISDICTION, DEFAULT_TAX_REGIME,
 };
 
 const TAX_REGIME_CTO: &str = "CTO";
@@ -45,6 +45,7 @@ struct CompileOutput {
 pub struct TaxService<T: TaxRepositoryTrait> {
     repository: Arc<T>,
     activity_service: Arc<dyn ActivityServiceTrait>,
+    cloud_extractor: Option<Arc<dyn TaxCloudExtractionTrait>>,
 }
 
 impl<T: TaxRepositoryTrait> TaxService<T> {
@@ -52,7 +53,16 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
         Self {
             repository,
             activity_service,
+            cloud_extractor: None,
         }
+    }
+
+    pub fn with_cloud_extractor(
+        mut self,
+        cloud_extractor: Arc<dyn TaxCloudExtractionTrait>,
+    ) -> Self {
+        self.cloud_extractor = Some(cloud_extractor);
+        self
     }
 
     fn rule_pack_version(tax_year: i32, jurisdiction: &str) -> String {
@@ -928,7 +938,18 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
             &document.filename,
         )?;
         let preview: String = text.chars().take(4000).collect();
-        let fields = Self::parse_ifu_fields(&preview);
+        let fields = if normalized_method == "CLOUD_AI" {
+            let extractor = self.cloud_extractor.as_ref().ok_or_else(|| {
+                Self::invalid_input(
+                    "Cloud AI extraction is unavailable in this runtime or has not been configured",
+                )
+            })?;
+            extractor
+                .extract_tax_fields(&document, &content, &preview)
+                .await?
+        } else {
+            Self::parse_ifu_fields(&preview)
+        };
         let extraction_issues =
             Self::build_extraction_issues(&document, &normalized_method, &fields);
         let extraction_status = Self::extraction_status(&fields).to_string();
@@ -1071,6 +1092,7 @@ mod tests {
     use async_trait::async_trait;
     use chrono::{DateTime, NaiveDate, Utc};
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, RwLock};
 
     struct MockActivityService;
@@ -1276,12 +1298,31 @@ mod tests {
         reports: RwLock<HashMap<String, TaxYearReport>>,
         issues_by_report: RwLock<HashMap<String, Vec<TaxIssue>>>,
         documents: RwLock<HashMap<String, TaxDocument>>,
+        document_contents: RwLock<HashMap<String, Vec<u8>>>,
         extractions: RwLock<HashMap<String, crate::tax::TaxDocumentExtraction>>,
         fields: RwLock<HashMap<String, ExtractedTaxField>>,
         reconciliation_entries: RwLock<HashMap<String, TaxReconciliationEntry>>,
         events: RwLock<HashMap<String, TaxEvent>>,
         amended_from: Mutex<Vec<String>>,
         last_reconciliation_update: Mutex<Option<TaxReconciliationEntryUpdate>>,
+    }
+
+    struct MockCloudExtractor {
+        called: AtomicBool,
+        fields: Vec<NewExtractedTaxField>,
+    }
+
+    #[async_trait]
+    impl TaxCloudExtractionTrait for MockCloudExtractor {
+        async fn extract_tax_fields(
+            &self,
+            _document: &TaxDocument,
+            _content: &[u8],
+            _local_text_preview: &str,
+        ) -> Result<Vec<NewExtractedTaxField>> {
+            self.called.store(true, Ordering::Relaxed);
+            Ok(self.fields.clone())
+        }
     }
 
     impl MockTaxRepository {
@@ -1296,6 +1337,7 @@ mod tests {
                 reports: RwLock::new(reports),
                 issues_by_report: RwLock::new(issues_by_report),
                 documents: RwLock::new(HashMap::new()),
+                document_contents: RwLock::new(HashMap::new()),
                 extractions: RwLock::new(HashMap::new()),
                 fields: RwLock::new(HashMap::new()),
                 reconciliation_entries: RwLock::new(HashMap::new()),
@@ -1315,10 +1357,15 @@ mod tests {
         }
 
         fn add_document(&self, document: TaxDocument) {
+            let document_id = document.id.clone();
             self.documents
                 .write()
                 .unwrap()
                 .insert(document.id.clone(), document);
+            self.document_contents
+                .write()
+                .unwrap()
+                .insert(document_id, b"Dividends 10".to_vec());
         }
 
         fn add_extraction(&self, extraction: crate::tax::TaxDocumentExtraction) {
@@ -1450,8 +1497,13 @@ mod tests {
             Ok(self.documents.read().unwrap().get(document_id).cloned())
         }
 
-        fn get_tax_document_content(&self, _document_id: &str) -> Result<Option<Vec<u8>>> {
-            unimplemented!()
+        fn get_tax_document_content(&self, document_id: &str) -> Result<Option<Vec<u8>>> {
+            Ok(self
+                .document_contents
+                .read()
+                .unwrap()
+                .get(document_id)
+                .cloned())
         }
 
         fn get_tax_document_extraction(
@@ -1471,12 +1523,43 @@ mod tests {
 
         async fn create_tax_document_extraction(
             &self,
-            _request: TaxDocumentExtractionRequest,
-            _status: String,
-            _raw_text_preview: Option<String>,
-            _fields: Vec<crate::tax::NewExtractedTaxField>,
+            request: TaxDocumentExtractionRequest,
+            status: String,
+            raw_text_preview: Option<String>,
+            fields: Vec<crate::tax::NewExtractedTaxField>,
         ) -> Result<TaxDocumentExtractionResult> {
-            panic!("create_tax_document_extraction should not be called in these tests")
+            let now = Utc::now().naive_utc();
+            let extraction = crate::tax::TaxDocumentExtraction {
+                id: "mock-extraction".to_string(),
+                document_id: request.document_id,
+                method: request.method,
+                status,
+                consent_granted: request.consent_granted,
+                raw_text_preview,
+                created_at: now,
+                updated_at: now,
+            };
+            let fields = fields
+                .into_iter()
+                .enumerate()
+                .map(|(index, field)| ExtractedTaxField {
+                    id: format!("field-{index}"),
+                    extraction_id: extraction.id.clone(),
+                    field_key: field.field_key,
+                    label: field.label,
+                    mapped_category: field.mapped_category,
+                    suggested_declaration_box: field.suggested_declaration_box,
+                    source_locator_json: field.source_locator_json,
+                    value_text: field.value_text,
+                    amount_eur: field.amount_eur,
+                    confidence: field.confidence,
+                    status: field.status,
+                    confirmed_amount_eur: field.confirmed_amount_eur,
+                    created_at: now,
+                    updated_at: now,
+                })
+                .collect();
+            Ok(TaxDocumentExtractionResult { extraction, fields })
         }
 
         async fn replace_tax_issues_by_code(
@@ -1666,6 +1749,13 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    fn make_text_document(report_id: &str) -> TaxDocument {
+        let mut document = make_document(report_id);
+        document.filename = "ifu.txt".to_string();
+        document.mime_type = Some("text/plain".to_string());
+        document
     }
 
     fn make_extraction() -> crate::tax::TaxDocumentExtraction {
@@ -2003,5 +2093,61 @@ mod tests {
             }]),
             "READY_FOR_REVIEW"
         );
+    }
+
+    #[tokio::test]
+    async fn cloud_extraction_requires_configured_extractor() {
+        let report = make_report("report-1", TaxReportStatus::Draft);
+        let repo = Arc::new(MockTaxRepository::new(report.clone()));
+        repo.add_document(make_text_document(&report.id));
+        let service = service_with_repo(repo);
+
+        let err = service
+            .extract_tax_document(TaxDocumentExtractionRequest {
+                document_id: "document-1".to_string(),
+                method: "CLOUD_AI".to_string(),
+                consent_granted: true,
+            })
+            .await
+            .expect_err("cloud extraction should require configured extractor");
+
+        assert!(err.to_string().contains("unavailable"));
+    }
+
+    #[tokio::test]
+    async fn cloud_extraction_uses_cloud_extractor_when_configured() {
+        let report = make_report("report-1", TaxReportStatus::Draft);
+        let repo = Arc::new(MockTaxRepository::new(report.clone()));
+        repo.add_document(make_text_document(&report.id));
+        let extractor = Arc::new(MockCloudExtractor {
+            called: AtomicBool::new(false),
+            fields: vec![NewExtractedTaxField {
+                field_key: CATEGORY_DIVIDENDS.to_string(),
+                label: "Dividends".to_string(),
+                mapped_category: Some(CATEGORY_DIVIDENDS.to_string()),
+                suggested_declaration_box: Some("2042-2DC".to_string()),
+                source_locator_json: None,
+                value_text: Some("Cloud extracted dividends".to_string()),
+                amount_eur: Some(Decimal::from(25u32)),
+                confidence: 0.9,
+                status: "SUGGESTED".to_string(),
+                confirmed_amount_eur: None,
+            }],
+        });
+        let service = TaxService::new(repo, Arc::new(MockActivityService))
+            .with_cloud_extractor(extractor.clone());
+
+        let result = service
+            .extract_tax_document(TaxDocumentExtractionRequest {
+                document_id: "document-1".to_string(),
+                method: "CLOUD_AI".to_string(),
+                consent_granted: true,
+            })
+            .await
+            .expect("cloud extraction should succeed with configured extractor");
+
+        assert_eq!(result.extraction.method, "CLOUD_AI");
+        assert_eq!(result.fields.len(), 1);
+        assert!(extractor.called.load(Ordering::Relaxed));
     }
 }

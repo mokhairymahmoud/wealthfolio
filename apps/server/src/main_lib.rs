@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 use crate::{
     ai_environment::ServerAiEnvironment, auth::AuthManager, config::Config,
     domain_events::WebDomainEventSink, events::EventBus, secrets::build_secret_store,
+    tax_cloud_extractor::AiTaxCloudExtractor,
 };
 use tracing::{error, warn};
 use tracing_subscriber::prelude::*;
@@ -398,8 +399,6 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         tax_document_key,
         data_root_path.clone(),
     ));
-    let tax_service: Arc<dyn TaxServiceTrait + Send + Sync> =
-        Arc::new(TaxService::new(tax_repository, activity_service.clone()));
 
     // Alternative asset repository for alternative assets operations
     let alternative_asset_repository: Arc<dyn AlternativeAssetRepositoryTrait + Send + Sync> =
@@ -475,6 +474,11 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         health_service.clone(),
     ));
     let ai_chat_service = Arc::new(ChatService::new(ai_environment, ChatConfig::default()));
+    let tax_cloud_extractor = Arc::new(AiTaxCloudExtractor::new(ai_chat_service.clone()));
+    let tax_service: Arc<dyn TaxServiceTrait + Send + Sync> = Arc::new(
+        TaxService::new(tax_repository, activity_service.clone())
+            .with_cloud_extractor(tax_cloud_extractor),
+    );
 
     // Device enroll service for E2EE sync
     let cloud_api_url = crate::features::cloud_api_base_url().unwrap_or_default();

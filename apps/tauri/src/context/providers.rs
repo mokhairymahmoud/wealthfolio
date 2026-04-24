@@ -3,6 +3,7 @@ use super::registry::ServiceContext;
 use crate::domain_events::TauriDomainEventSink;
 use crate::secret_store::shared_secret_store;
 use crate::services::ConnectService;
+use crate::tax_cloud_extractor::AiTaxCloudExtractor;
 use log::{error, warn};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
@@ -226,10 +227,6 @@ pub async fn initialize_context(
         tax_document_key,
         std::path::PathBuf::from(app_data_dir),
     ));
-    let tax_service = Arc::new(TaxService::new(
-        tax_repository.clone(),
-        activity_service.clone(),
-    ));
     let limits_service = Arc::new(ContributionLimitService::new_with_timezone(
         fx_service.clone(),
         limit_repository.clone(),
@@ -368,6 +365,11 @@ pub async fn initialize_context(
         health_service.clone(),
     ));
     let ai_chat_service = Arc::new(ChatService::new(ai_environment, ChatConfig::default()));
+    let tax_cloud_extractor = Arc::new(AiTaxCloudExtractor::new(ai_chat_service.clone()));
+    let tax_service = Arc::new(
+        TaxService::new(tax_repository.clone(), activity_service.clone())
+            .with_cloud_extractor(tax_cloud_extractor),
+    );
 
     // Device enroll service for E2EE sync
     let cloud_api_url = crate::services::cloud_api_base_url().unwrap_or_default();

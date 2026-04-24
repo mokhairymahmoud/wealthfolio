@@ -10,6 +10,16 @@ use crate::tax::{
 };
 
 #[async_trait]
+pub trait TaxCloudExtractionTrait: Send + Sync {
+    async fn extract_tax_fields(
+        &self,
+        document: &TaxDocument,
+        content: &[u8],
+        local_text_preview: &str,
+    ) -> Result<Vec<crate::tax::NewExtractedTaxField>>;
+}
+
+#[async_trait]
 pub trait TaxRepositoryTrait: Send + Sync {
     fn get_tax_profile(&self) -> Result<Option<TaxProfile>>;
     async fn upsert_tax_profile(&self, profile: TaxProfileUpdate) -> Result<TaxProfile>;

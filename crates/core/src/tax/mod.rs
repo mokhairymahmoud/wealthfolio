@@ -6,4 +6,4 @@ mod tax_traits;
 
 pub use tax_model::*;
 pub use tax_service::TaxService;
-pub use tax_traits::{TaxRepositoryTrait, TaxServiceTrait};
+pub use tax_traits::{TaxCloudExtractionTrait, TaxRepositoryTrait, TaxServiceTrait};

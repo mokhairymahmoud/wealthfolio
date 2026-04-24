@@ -10,6 +10,7 @@ mod main_lib;
 mod models;
 mod scheduler;
 mod secrets;
+mod tax_cloud_extractor;
 
 use api::app_router;
 use config::Config;

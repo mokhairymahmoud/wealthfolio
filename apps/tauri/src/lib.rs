@@ -9,6 +9,7 @@ mod listeners;
 mod scheduler;
 mod secret_store;
 mod services;
+mod tax_cloud_extractor;
 
 #[cfg(desktop)]
 mod menu;
