@@ -580,28 +580,33 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
 
     fn parse_ifu_fields(text: &str) -> Vec<NewExtractedTaxField> {
         text.lines()
-            .filter_map(|line| {
+            .enumerate()
+            .filter_map(|(index, line)| {
                 let lower = line.to_lowercase();
-                let (category, label) = if lower.contains("dividend")
+                let (category, label, suggested_box) = if lower.contains("dividend")
                     || lower.contains("dividende")
                     || lower.contains("dividendes")
                 {
-                    (CATEGORY_DIVIDENDS, "Dividends")
+                    (CATEGORY_DIVIDENDS, "Dividends", Some("2042-2DC"))
                 } else if lower.contains("interest")
                     || lower.contains("intérêt")
                     || lower.contains("interet")
                     || lower.contains("intérêts")
                     || lower.contains("interets")
                 {
-                    (CATEGORY_INTEREST, "Interest")
+                    (CATEGORY_INTEREST, "Interest", Some("2042-2TR"))
                 } else if lower.contains("plus-value")
                     || lower.contains("plus value")
                     || lower.contains("gain")
                     || lower.contains("cession")
                 {
-                    (CATEGORY_SECURITY_GAINS, "Security gains")
+                    (
+                        CATEGORY_SECURITY_GAINS,
+                        "Security gains",
+                        Some("2074 / 2042-3VG-3VH"),
+                    )
                 } else if lower.contains("frais") || lower.contains("fee") {
-                    (CATEGORY_FEES, "Fees")
+                    (CATEGORY_FEES, "Fees", None)
                 } else {
                     return None;
                 };
@@ -610,6 +615,14 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     field_key: category.to_string(),
                     label: label.to_string(),
                     mapped_category: Some(category.to_string()),
+                    suggested_declaration_box: suggested_box.map(ToString::to_string),
+                    source_locator_json: Some(
+                        json!({
+                            "lineNumber": index + 1,
+                            "snippet": line.trim(),
+                        })
+                        .to_string(),
+                    ),
                     value_text: Some(line.trim().to_string()),
                     amount_eur: Some(amount),
                     confidence: 0.55,
@@ -1565,6 +1578,10 @@ mod tests {
             field_key: CATEGORY_DIVIDENDS.to_string(),
             label: "Dividends".to_string(),
             mapped_category: Some(CATEGORY_DIVIDENDS.to_string()),
+            suggested_declaration_box: Some("2042-2DC".to_string()),
+            source_locator_json: Some(
+                json!({ "lineNumber": 1, "snippet": "Dividends 10" }).to_string(),
+            ),
             value_text: Some("Dividends 10".to_string()),
             amount_eur: Some(Decimal::from(10u32)),
             confidence: 0.9,

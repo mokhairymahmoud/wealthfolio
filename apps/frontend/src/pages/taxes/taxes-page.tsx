@@ -105,6 +105,20 @@ function flattenExtractedFields(detail: TaxReportDetail | null | undefined) {
   return Array.from(latestByDocument.values()).flatMap((result) => result.fields);
 }
 
+function formatSourceLocator(sourceLocatorJson: string | null | undefined) {
+  if (!sourceLocatorJson) return null;
+  try {
+    const parsed = JSON.parse(sourceLocatorJson) as { lineNumber?: number; snippet?: string };
+    const parts = [
+      parsed.lineNumber != null ? `Line ${parsed.lineNumber}` : null,
+      parsed.snippet ? parsed.snippet : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(" · ") : sourceLocatorJson;
+  } catch {
+    return sourceLocatorJson;
+  }
+}
+
 function TaxEventRow({
   event,
   disabled,
@@ -400,6 +414,14 @@ function ExtractionFieldRow({
       <TableCell>
         <div>{formatAmount(field.confirmedAmountEur ?? field.amountEur)}</div>
         <div className="text-muted-foreground text-xs">Confidence {Math.round(field.confidence * 100)}%</div>
+        {field.suggestedDeclarationBox && (
+          <div className="text-muted-foreground text-xs">Box {field.suggestedDeclarationBox}</div>
+        )}
+        {field.sourceLocatorJson && (
+          <div className="text-muted-foreground text-xs">
+            {formatSourceLocator(field.sourceLocatorJson)}
+          </div>
+        )}
       </TableCell>
       <TableCell>
         <Badge

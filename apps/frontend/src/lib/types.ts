@@ -245,6 +245,8 @@ export interface ExtractedTaxField {
   fieldKey: string;
   label: string;
   mappedCategory?: string | null;
+  suggestedDeclarationBox?: string | null;
+  sourceLocatorJson?: string | null;
   valueText?: string | null;
   amountEur?: string | number | null;
   confidence: number;

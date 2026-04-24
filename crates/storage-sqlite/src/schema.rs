@@ -584,6 +584,8 @@ diesel::table! {
         confidence -> Double,
         status -> Text,
         confirmed_amount_eur -> Nullable<Text>,
+        suggested_declaration_box -> Nullable<Text>,
+        source_locator_json -> Nullable<Text>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
     }
