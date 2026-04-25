@@ -45,6 +45,12 @@ pub struct TaxProfile {
     pub tax_residence_country: String,
     pub default_tax_regime: String,
     pub pfu_or_bareme_preference: Option<String>,
+    pub situation_familiale: String,
+    pub nombre_enfants: i32,
+    pub nombre_enfants_handicapes: i32,
+    pub parent_isole: bool,
+    pub ancien_combattant_ou_invalidite: bool,
+    pub nombre_parts: f64,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -56,6 +62,46 @@ pub struct TaxProfileUpdate {
     pub tax_residence_country: String,
     pub default_tax_regime: String,
     pub pfu_or_bareme_preference: Option<String>,
+    pub situation_familiale: String,
+    pub nombre_enfants: i32,
+    pub nombre_enfants_handicapes: i32,
+    pub parent_isole: bool,
+    pub ancien_combattant_ou_invalidite: bool,
+}
+
+pub fn compute_nombre_parts(
+    situation_familiale: &str,
+    nombre_enfants: i32,
+    nombre_enfants_handicapes: i32,
+    parent_isole: bool,
+    ancien_combattant_ou_invalidite: bool,
+) -> f64 {
+    let base: f64 = match situation_familiale {
+        "MARIE" | "PACSE" => 2.0,
+        _ => 1.0,
+    };
+
+    let total_children = nombre_enfants + nombre_enfants_handicapes;
+    let children_parts: f64 = match total_children {
+        0 => 0.0,
+        1 => 0.5,
+        2 => 1.0,
+        n => 1.0 + (n - 2) as f64,
+    };
+
+    let handicap_bonus = nombre_enfants_handicapes as f64 * 0.5;
+    let parent_isole_bonus = if parent_isole && total_children > 0 {
+        0.5
+    } else {
+        0.0
+    };
+    let combattant_bonus = if ancien_combattant_ou_invalidite {
+        0.5
+    } else {
+        0.0
+    };
+
+    base + children_parts + handicap_bonus + parent_isole_bonus + combattant_bonus
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

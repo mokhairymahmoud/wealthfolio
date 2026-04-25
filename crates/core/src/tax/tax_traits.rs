@@ -22,7 +22,11 @@ pub trait TaxCloudExtractionTrait: Send + Sync {
 #[async_trait]
 pub trait TaxRepositoryTrait: Send + Sync {
     fn get_tax_profile(&self) -> Result<Option<TaxProfile>>;
-    async fn upsert_tax_profile(&self, profile: TaxProfileUpdate) -> Result<TaxProfile>;
+    async fn upsert_tax_profile(
+        &self,
+        profile: TaxProfileUpdate,
+        nombre_parts: f64,
+    ) -> Result<TaxProfile>;
 
     fn get_account_tax_profiles(&self) -> Result<Vec<AccountTaxProfile>>;
     fn get_account_tax_profile(&self, account_id: &str) -> Result<Option<AccountTaxProfile>>;

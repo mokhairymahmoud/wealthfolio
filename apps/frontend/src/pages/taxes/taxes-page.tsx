@@ -14,6 +14,7 @@ import {
   reconcileTaxYearReport,
   updateAccountTaxProfile,
   updateExtractedTaxField,
+  updateTaxProfile,
   updateTaxReconciliationEntry,
   updateTaxEvent,
   uploadTaxDocument,
@@ -25,6 +26,7 @@ import type {
   AccountTaxProfile,
   TaxEvent,
   TaxEventUpdate,
+  TaxProfileUpdate,
   TaxReconciliationEntry,
   TaxReconciliationEntryUpdate,
   TaxReportDetail,
@@ -63,6 +65,14 @@ import {
   TableHeader,
   TableRow,
 } from "@wealthfolio/ui/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@wealthfolio/ui/components/ui/select";
+import { Switch } from "@wealthfolio/ui/components/ui/switch";
 import { Textarea } from "@wealthfolio/ui/components/ui/textarea";
 import { useCallback, useMemo, useState } from "react";
 
@@ -738,6 +748,33 @@ export default function TaxesPage() {
     },
   });
 
+  const { mutate: mutateTaxProfile, isPending: isTaxProfilePending } = useMutation({
+    mutationFn: (update: TaxProfileUpdate) => updateTaxProfile(update),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.TAX_PROFILE] });
+    },
+  });
+
+  const handleFoyerFiscalChange = useCallback(
+    (field: keyof TaxProfileUpdate, value: string | number | boolean) => {
+      if (!profile) return;
+      const update: TaxProfileUpdate = {
+        jurisdiction: profile.jurisdiction,
+        taxResidenceCountry: profile.taxResidenceCountry,
+        defaultTaxRegime: profile.defaultTaxRegime,
+        pfuOrBaremePreference: profile.pfuOrBaremePreference,
+        situationFamiliale: profile.situationFamiliale,
+        nombreEnfants: profile.nombreEnfants,
+        nombreEnfantsHandicapes: profile.nombreEnfantsHandicapes,
+        parentIsole: profile.parentIsole,
+        ancienCombattantOuInvalidite: profile.ancienCombattantOuInvalidite,
+        [field]: value,
+      };
+      mutateTaxProfile(update);
+    },
+    [profile, mutateTaxProfile],
+  );
+
   const securitiesAccounts = useMemo(
     () => (accounts ?? []).filter((account) => account.accountType === AccountType.SECURITIES),
     [accounts],
@@ -914,6 +951,99 @@ export default function TaxesPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Foyer Fiscal</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-6">
+            <div className="space-y-1">
+              <Label className="text-xs">Situation familiale</Label>
+              <Select
+                value={profile?.situationFamiliale ?? "CELIBATAIRE"}
+                onValueChange={(value) => handleFoyerFiscalChange("situationFamiliale", value)}
+                disabled={isTaxProfilePending}
+              >
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CELIBATAIRE">Celibataire</SelectItem>
+                  <SelectItem value="MARIE">Marie(e)</SelectItem>
+                  <SelectItem value="PACSE">Pacse(e)</SelectItem>
+                  <SelectItem value="DIVORCE">Divorce(e)</SelectItem>
+                  <SelectItem value="VEUF">Veuf/Veuve</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Enfants a charge</Label>
+              <Input
+                type="number"
+                min={0}
+                className="h-8"
+                value={profile?.nombreEnfants ?? 0}
+                onChange={(e) =>
+                  handleFoyerFiscalChange(
+                    "nombreEnfants",
+                    Math.max(0, parseInt(e.target.value) || 0),
+                  )
+                }
+                disabled={isTaxProfilePending}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Enfants handicapes</Label>
+              <Input
+                type="number"
+                min={0}
+                className="h-8"
+                value={profile?.nombreEnfantsHandicapes ?? 0}
+                onChange={(e) =>
+                  handleFoyerFiscalChange(
+                    "nombreEnfantsHandicapes",
+                    Math.max(0, parseInt(e.target.value) || 0),
+                  )
+                }
+                disabled={isTaxProfilePending}
+              />
+            </div>
+            <div className="flex items-end gap-2 pb-1">
+              <div className="space-y-1">
+                <Label className="text-xs">Parent isole</Label>
+                <div className="flex h-8 items-center">
+                  <Switch
+                    checked={profile?.parentIsole ?? false}
+                    onCheckedChange={(checked) => handleFoyerFiscalChange("parentIsole", checked)}
+                    disabled={isTaxProfilePending}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-end gap-2 pb-1">
+              <div className="space-y-1">
+                <Label className="text-xs">Invalidite / Ancien combattant</Label>
+                <div className="flex h-8 items-center">
+                  <Switch
+                    checked={profile?.ancienCombattantOuInvalidite ?? false}
+                    onCheckedChange={(checked) =>
+                      handleFoyerFiscalChange("ancienCombattantOuInvalidite", checked)
+                    }
+                    disabled={isTaxProfilePending}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Nombre de parts</Label>
+              <div className="flex h-8 items-center">
+                <span className="text-2xl font-semibold">{profile?.nombreParts ?? 1}</span>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card>

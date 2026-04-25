@@ -280,8 +280,12 @@ impl TaxRepositoryTrait for TaxRepository {
         Ok(result.map(TaxProfile::from))
     }
 
-    async fn upsert_tax_profile(&self, profile: TaxProfileUpdate) -> Result<TaxProfile> {
-        let mut profile_db = TaxProfileDB::from(profile);
+    async fn upsert_tax_profile(
+        &self,
+        profile: TaxProfileUpdate,
+        nombre_parts: f64,
+    ) -> Result<TaxProfile> {
+        let mut profile_db = TaxProfileDB::from_update(profile, nombre_parts);
         self.writer
             .exec_tx(move |tx| -> Result<TaxProfile> {
                 if let Some(existing) = tax_profiles::table

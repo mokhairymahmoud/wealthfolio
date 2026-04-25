@@ -34,6 +34,12 @@ pub struct TaxProfileDB {
     pub pfu_or_bareme_preference: Option<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub situation_familiale: String,
+    pub nombre_enfants: i32,
+    pub nombre_enfants_handicapes: i32,
+    pub parent_isole: i32,
+    pub ancien_combattant_ou_invalidite: i32,
+    pub nombre_parts: f32,
 }
 
 #[derive(
@@ -246,14 +252,20 @@ impl From<TaxProfileDB> for TaxProfile {
             tax_residence_country: db.tax_residence_country,
             default_tax_regime: db.default_tax_regime,
             pfu_or_bareme_preference: db.pfu_or_bareme_preference,
+            situation_familiale: db.situation_familiale,
+            nombre_enfants: db.nombre_enfants,
+            nombre_enfants_handicapes: db.nombre_enfants_handicapes,
+            parent_isole: db.parent_isole != 0,
+            ancien_combattant_ou_invalidite: db.ancien_combattant_ou_invalidite != 0,
+            nombre_parts: db.nombre_parts as f64,
             created_at: db.created_at,
             updated_at: db.updated_at,
         }
     }
 }
 
-impl From<TaxProfileUpdate> for TaxProfileDB {
-    fn from(domain: TaxProfileUpdate) -> Self {
+impl TaxProfileDB {
+    pub fn from_update(domain: TaxProfileUpdate, nombre_parts: f64) -> Self {
         let now = chrono::Utc::now().naive_utc();
         Self {
             id: "default".to_string(),
@@ -261,6 +273,16 @@ impl From<TaxProfileUpdate> for TaxProfileDB {
             tax_residence_country: domain.tax_residence_country,
             default_tax_regime: domain.default_tax_regime,
             pfu_or_bareme_preference: domain.pfu_or_bareme_preference,
+            situation_familiale: domain.situation_familiale,
+            nombre_enfants: domain.nombre_enfants,
+            nombre_enfants_handicapes: domain.nombre_enfants_handicapes,
+            parent_isole: if domain.parent_isole { 1 } else { 0 },
+            ancien_combattant_ou_invalidite: if domain.ancien_combattant_ou_invalidite {
+                1
+            } else {
+                0
+            },
+            nombre_parts: nombre_parts as f32,
             created_at: now,
             updated_at: now,
         }

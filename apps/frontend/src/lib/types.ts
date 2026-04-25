@@ -70,6 +70,12 @@ export interface TaxProfile {
   taxResidenceCountry: string;
   defaultTaxRegime: string;
   pfuOrBaremePreference?: string | null;
+  situationFamiliale: string;
+  nombreEnfants: number;
+  nombreEnfantsHandicapes: number;
+  parentIsole: boolean;
+  ancienCombattantOuInvalidite: boolean;
+  nombreParts: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -79,6 +85,11 @@ export interface TaxProfileUpdate {
   taxResidenceCountry: string;
   defaultTaxRegime: string;
   pfuOrBaremePreference?: string | null;
+  situationFamiliale: string;
+  nombreEnfants: number;
+  nombreEnfantsHandicapes: number;
+  parentIsole: boolean;
+  ancienCombattantOuInvalidite: boolean;
 }
 
 export interface AccountTaxProfile {

@@ -475,6 +475,12 @@ diesel::table! {
         pfu_or_bareme_preference -> Nullable<Text>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        situation_familiale -> Text,
+        nombre_enfants -> Integer,
+        nombre_enfants_handicapes -> Integer,
+        parent_isole -> Integer,
+        ancien_combattant_ou_invalidite -> Integer,
+        nombre_parts -> Float,
     }
 }
 
