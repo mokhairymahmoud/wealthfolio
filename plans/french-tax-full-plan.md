@@ -65,7 +65,7 @@ End-to-end: migration → model → service → API/commands → adapter → UI 
 - [x] Tax page shows foyer fiscal form section with all fields
 - [x] Nombre de parts displayed as computed read-only value
 - [x] Rust unit tests for parts computation edge cases
-- [ ] `pnpm type-check` and `cargo clippy` pass
+- [x] `pnpm type-check` and `cargo clippy` pass
 
 ---
 
