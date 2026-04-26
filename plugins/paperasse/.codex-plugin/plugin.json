@@ -1,0 +1,41 @@
+{
+  "name": "paperasse",
+  "version": "1.1.0",
+  "description": "Skills et outils pour la comptabilite francaise.",
+  "author": {
+    "name": "romainsimon",
+    "email": "[TODO: author@example.com]",
+    "url": "https://github.com/romainsimon"
+  },
+  "homepage": "https://github.com/romainsimon/paperasse",
+  "repository": "https://github.com/romainsimon/paperasse",
+  "license": "MIT",
+  "keywords": [
+    "french-accounting",
+    "tax",
+    "legal",
+    "skills",
+    "paperasse"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Paperasse",
+    "shortDescription": "French accounting, tax, notary, and copro skills",
+    "longDescription": "Packages the upstream Paperasse multi-skill toolkit for French accounting, tax, audit, notary, and copro workflows.",
+    "developerName": "romainsimon",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/romainsimon/paperasse",
+    "privacyPolicyURL": "[TODO: Add plugin privacy policy URL]",
+    "termsOfServiceURL": "[TODO: Add plugin terms of service URL]",
+    "defaultPrompt": [
+      "Use Paperasse comptable to review French bookkeeping and invoicing requirements.",
+      "Use Paperasse fiscaliste to explain a French personal tax scenario step by step.",
+      "Use Paperasse notaire to prepare a French property or succession checklist."
+    ],
+    "brandColor": "[TODO: Choose plugin brand color]"
+  }
+}
