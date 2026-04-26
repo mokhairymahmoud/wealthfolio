@@ -107,7 +107,7 @@ const ALL_DATA_ACCESS_TOOL_IDS = [
 export function ProviderSettingsCard({
   provider,
   onToggleEnabled,
-  onSetDefault: _onSetDefault,
+  onSetDefault,
   onSaveApiKey,
   onDeleteApiKey,
   onRevealApiKey,
@@ -128,7 +128,6 @@ export function ProviderSettingsCard({
 }: ProviderSettingsCardProps) {
   // Suppress unused variable warnings for deprecated/unused props
   void _onSelectModel;
-  void _onSetDefault;
   const [isOpen, setIsOpen] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiKeyValue, setApiKeyValue] = useState("");
@@ -367,6 +366,21 @@ export function ProviderSettingsCard({
         <CollapsibleContent>
           <div className="border-t px-4 py-5">
             <div className="space-y-5">
+              {/* Default provider */}
+              {!provider.isDefault && provider.enabled && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Use as default AI provider</span>
+                  <Button size="sm" variant="outline" onClick={onSetDefault}>
+                    Set as default
+                  </Button>
+                </div>
+              )}
+              {provider.isDefault && (
+                <div className="text-muted-foreground flex items-center gap-2 text-sm">
+                  <Icons.Check className="text-success h-4 w-4" />
+                  This is your default AI provider
+                </div>
+              )}
               {/* API Key Section (only for API providers) */}
               {provider.type === "api" && (
                 <div className="bg-muted/40 rounded-lg p-4">

@@ -239,6 +239,9 @@
         },
         "gpt-5.4-nano": {
           "capabilities": { "tools": true, "thinking": false, "vision": false }
+        },
+        "codex-mini-latest": {
+          "capabilities": { "tools": true, "thinking": true, "vision": false }
         }
       },
       "defaultModel": "gpt-5.4-mini",

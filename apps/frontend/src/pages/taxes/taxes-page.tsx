@@ -72,6 +72,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@wealthfolio/ui/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@wealthfolio/ui/components/ui/dropdown-menu";
 import { Switch } from "@wealthfolio/ui/components/ui/switch";
 import { Textarea } from "@wealthfolio/ui/components/ui/textarea";
 import { useCallback, useMemo, useState } from "react";
@@ -559,10 +566,11 @@ function DocumentUploadCard({
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           <input
+            key={selectedFile ? "has-file" : "empty"}
             className="border-input bg-background h-9 rounded-md border px-3 py-1 text-sm"
             type="file"
             accept=".pdf,.txt,.csv,text/*,application/pdf"
-            disabled={isReportLocked}
+            disabled={isReportLocked || isUploading}
             onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
           />
           <Button
@@ -584,12 +592,14 @@ function DocumentUploadCard({
               key={document.id}
               className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm"
             >
-              <div>
-                <div className="font-medium">{document.filename}</div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">{document.filename}</div>
                 <div className="text-muted-foreground text-xs">
                   {document.documentType} · {Math.round(document.sizeBytes / 1024)} KB
                 </div>
-                <div className="text-muted-foreground text-xs">SHA-256 {document.sha256}</div>
+                <div className="text-muted-foreground truncate text-xs">
+                  SHA-256 {document.sha256}
+                </div>
                 {latestExtractionByDocument.get(document.id) && (
                   <div className="text-muted-foreground mt-1 text-xs">
                     Latest extraction:{" "}
@@ -600,60 +610,59 @@ function DocumentUploadCard({
                   </div>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-shrink-0 items-center gap-2">
                 <Badge variant="outline">Encrypted</Badge>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={isReportLocked || rerunExtractionMutation.isPending}
-                  onClick={() =>
-                    rerunExtractionMutation.mutate({
-                      documentId: document.id,
-                      method: "LOCAL_TEXT",
-                      consentGranted: false,
-                    })
-                  }
-                >
-                  Re-extract
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={isReportLocked || rerunExtractionMutation.isPending}
-                  onClick={() => onCloudExtract(document.id)}
-                >
-                  Use Cloud
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!latestExtractionByDocument.get(document.id)}
-                  onClick={() => onPreview(document.id)}
-                >
-                  Preview Text
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label="Download document"
-                  disabled={downloadDocumentMutation.isPending}
-                  onClick={() => downloadDocumentMutation.mutate(document.id)}
-                >
-                  <Icons.Download className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label="Delete document"
-                  disabled={deleteDocumentMutation.isPending || isReportLocked}
-                  onClick={() => {
-                    if (window.confirm(`Delete ${document.filename}?`)) {
-                      deleteDocumentMutation.mutate(document.id);
-                    }
-                  }}
-                >
-                  <Icons.Trash className="h-4 w-4" />
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="icon" variant="ghost" aria-label="Document actions">
+                      <Icons.MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      disabled={isReportLocked || rerunExtractionMutation.isPending}
+                      onClick={() =>
+                        rerunExtractionMutation.mutate({
+                          documentId: document.id,
+                          method: "LOCAL_TEXT",
+                          consentGranted: false,
+                        })
+                      }
+                    >
+                      Re-extract (local)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={isReportLocked || rerunExtractionMutation.isPending}
+                      onClick={() => onCloudExtract(document.id)}
+                    >
+                      Use Cloud AI
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!latestExtractionByDocument.get(document.id)}
+                      onClick={() => onPreview(document.id)}
+                    >
+                      Preview text
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={downloadDocumentMutation.isPending}
+                      onClick={() => downloadDocumentMutation.mutate(document.id)}
+                    >
+                      Download
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      disabled={deleteDocumentMutation.isPending || isReportLocked}
+                      onClick={() => {
+                        if (window.confirm(`Delete ${document.filename}?`)) {
+                          deleteDocumentMutation.mutate(document.id);
+                        }
+                      }}
+                    >
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
           ))}
@@ -1591,7 +1600,7 @@ export default function TaxesPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Allow cloud extraction for this IFU?</AlertDialogTitle>
+            <AlertDialogTitle>Allow cloud extraction for this document?</AlertDialogTitle>
             <AlertDialogDescription>
               Cloud extraction may send document text to an external AI provider. Use this only if
               local extraction was insufficient and you consent to that transfer for this document.

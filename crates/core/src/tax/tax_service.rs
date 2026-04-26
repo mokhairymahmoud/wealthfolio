@@ -742,11 +742,23 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
         text.lines()
             .enumerate()
             .filter_map(|(index, line)| {
+                // Normalize OCR double-spaces so keyword matching works regardless of spacing
                 let lower = line.to_lowercase();
+                let normalized = lower.split_whitespace().collect::<Vec<_>>().join(" ");
+                let lower = normalized.as_str();
                 let (field_key, label, suggested_box) = if lower.contains("net imposable")
                     || lower.contains("revenu imposable")
                     || lower.contains("net fiscal")
                     || lower.contains("cumul imposable")
+                    // Public-sector / hospital payslips
+                    || lower.contains("montant net social")
+                    || lower.contains("net a payer avant")
+                    || lower.contains("totalisation brut")
+                    || lower.contains("total brut")
+                    || lower.contains("brut imposable")
+                    // OCR common typos
+                    || lower.contains("net impogable")
+                    || lower.contains("brut impogable")
                 {
                     ("NET_IMPOSABLE", "Net imposable cumulé", Some("1AJ"))
                 } else if lower.contains("csg déductible")
@@ -754,6 +766,12 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     || lower.contains("csg non imposable")
                 {
                     ("CSG_DEDUCTIBLE", "CSG déductible", None)
+                } else if lower.contains("csg non déductible")
+                    || lower.contains("csg non deductible")
+                    || lower.contains("crds")
+                {
+                    // CSG non déductible is also useful context but mapped to same category
+                    ("CSG_NON_DEDUCTIBLE", "CSG non déductible", None)
                 } else if lower.contains("heures sup")
                     || lower.contains("heures supplémentaires")
                     || lower.contains("h. sup")
@@ -765,11 +783,27 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                         "Heures supplémentaires exonérées",
                         Some("1GH"),
                     )
+                } else if (lower.contains("prelevement a la source")
+                    || lower.contains("prélèvement à la source")
+                    || lower.contains("p.a.s")
+                    || lower.contains("tx per")
+                    || lower.contains("taux personnalisé"))
+                    && !lower.contains("net a payer")
+                    && !lower.contains("net à payer")
+                {
+                    ("PRELEVEMENT_SOURCE", "Prélèvement à la source", None)
                 } else {
                     return None;
                 };
 
-                Self::parse_decimal_from_line(line).map(|amount| NewExtractedTaxField {
+                // For NET_IMPOSABLE lines, take the largest number (annual cumul column).
+                // For other fields, take the last number (closest to the label).
+                let amount = if field_key == "NET_IMPOSABLE" {
+                    Self::parse_largest_decimal_from_line(line)
+                } else {
+                    Self::parse_decimal_from_line(line)
+                };
+                amount.map(|amount| NewExtractedTaxField {
                     field_key: field_key.to_string(),
                     label: label.to_string(),
                     mapped_category: Some(CATEGORY_SALARY_INCOME.to_string()),
@@ -798,6 +832,40 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
             .filter(|part| !part.is_empty() && part.chars().any(|ch| ch.is_ascii_digit()))
             .filter_map(|part| part.parse::<Decimal>().ok())
             .next_back()
+    }
+
+    /// Returns the largest decimal found on a line — used for cumul annual columns.
+    ///
+    /// Handles OCR-split numbers: `28 146.18` → tokens `["28", "146.18"]`.
+    /// We try joining adjacent short integer tokens with the following decimal token
+    /// (e.g. `28` + `146.18` → `28146.18`) and take the maximum result.
+    fn parse_largest_decimal_from_line(line: &str) -> Option<Decimal> {
+        let normalized = line.replace(',', ".");
+        let tokens: Vec<&str> = normalized
+            .split(|ch: char| !(ch.is_ascii_digit() || ch == '.' || ch == '-'))
+            .filter(|part| !part.is_empty() && part.chars().any(|ch| ch.is_ascii_digit()))
+            .collect();
+
+        let mut candidates: Vec<Decimal> = tokens
+            .iter()
+            .filter_map(|t| t.parse::<Decimal>().ok())
+            .filter(|d| *d > Decimal::ZERO)
+            .collect();
+
+        // Try merging adjacent integer + decimal pairs (OCR space-split numbers)
+        for i in 0..tokens.len().saturating_sub(1) {
+            let a = tokens[i];
+            let b = tokens[i + 1];
+            // a is a short integer (1-3 digits), b contains a decimal point
+            if !a.contains('.') && a.len() <= 3 && b.contains('.') {
+                let merged = format!("{}{}", a, b);
+                if let Ok(d) = merged.parse::<Decimal>() {
+                    candidates.push(d);
+                }
+            }
+        }
+
+        candidates.into_iter().max()
     }
 
     fn extraction_issue_codes(document_id: &str) -> Vec<String> {
@@ -1084,6 +1152,22 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
             )));
         }
         self.editable_report_by_id(&upload.report_id)?;
+
+        // Dedup by SHA-256: return existing document if same content already uploaded.
+        let sha256 = {
+            use sha2::{Digest, Sha256};
+            let hash = Sha256::digest(&upload.content);
+            format!("sha256:{}", hex::encode(hash))
+        };
+        let existing = self
+            .repository
+            .list_tax_documents(&upload.report_id)?
+            .into_iter()
+            .find(|doc| doc.sha256 == sha256);
+        if let Some(doc) = existing {
+            return Ok(doc);
+        }
+
         self.repository
             .upload_tax_document(
                 upload.report_id,

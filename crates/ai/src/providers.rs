@@ -198,18 +198,43 @@ impl<E: AiEnvironment> ProviderService<E> {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
 
-        // Get current provider and model
-        let provider_id = stored
-            .provider_id
-            .clone()
+        // Get current provider — prefer the new provider settings system's defaultProvider
+        // over the old ai_settings key, so the AI Providers settings page takes effect.
+        let new_system_default: Option<String> = self
+            .env
+            .settings_service()
+            .get_setting_value(AI_PROVIDER_SETTINGS_KEY)
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str::<AiProviderSettings>(&s).ok())
+            .and_then(|s| s.default_provider);
+
+        let provider_id = new_system_default
+            .or_else(|| stored.provider_id.clone())
             .unwrap_or_else(|| "ollama".to_string());
-        let model = stored.model.clone().unwrap_or_else(|| {
-            PROVIDER_CATALOG
-                .providers
-                .get(&provider_id)
-                .map(|p| p.default_model.clone())
-                .unwrap_or_else(|| "deepseek-r1:8b".to_string())
-        });
+        // Prefer selectedModel from the new provider settings system for the active provider.
+        let new_system_model: Option<String> = self
+            .env
+            .settings_service()
+            .get_setting_value(AI_PROVIDER_SETTINGS_KEY)
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str::<AiProviderSettings>(&s).ok())
+            .and_then(|s| {
+                s.providers
+                    .get(&provider_id)
+                    .and_then(|p| p.selected_model.clone())
+            });
+
+        let model = new_system_model
+            .or_else(|| stored.model.clone())
+            .unwrap_or_else(|| {
+                PROVIDER_CATALOG
+                    .providers
+                    .get(&provider_id)
+                    .map(|p| p.default_model.clone())
+                    .unwrap_or_else(|| "deepseek-r1:8b".to_string())
+            });
 
         // Check if we have an API key
         let has_api_key = self.has_api_key(&provider_id);

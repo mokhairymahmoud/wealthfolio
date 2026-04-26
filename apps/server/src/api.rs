@@ -7,7 +7,7 @@ use crate::{
     models::{Account, AccountUpdate, NewAccount},
 };
 use axum::middleware;
-use axum::{routing::get, Json, Router};
+use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -167,6 +167,7 @@ pub fn app_router(state: Arc<AppState>, config: &Config) -> Router {
         .layer(cors)
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(DefaultBodyLimit::max(20 * 1024 * 1024)) // 20 MB for document uploads
         .layer(TimeoutLayer::new(config.request_timeout))
         .layer(
             TraceLayer::new_for_http()

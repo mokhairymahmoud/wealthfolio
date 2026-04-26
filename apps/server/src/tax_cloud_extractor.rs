@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
+use tracing::{debug, warn};
 use wealthfolio_ai::{
     types::MessageAttachment, AiEnvironment, AiStreamEvent, ChatService, SendMessageRequest,
 };
@@ -42,12 +42,32 @@ struct CloudExtractedField {
 
 fn extraction_prompt(filename: &str, local_text_preview: &str) -> String {
     format!(
-        "You are extracting French tax declaration fields from the document '{filename}'. \
-Return ONLY valid JSON with this exact shape: \
-{{\"fields\":[{{\"fieldKey\":\"DIVIDENDS\"|\"INTEREST\"|\"SECURITY_GAINS\"|\"FEES\",\"label\":string,\"mappedCategory\":string|null,\"suggestedDeclarationBox\":string|null,\"valueText\":string|null,\"amountEur\":number|null,\"confidence\":number,\"sourceLocator\":object|null}}]}}. \
-Use confidence between 0 and 1. Omit unsupported fields. Amounts must be in EUR. \
-Use sourceLocator to help the user verify where the value came from. \
-Here is local OCR/text extraction for reference:\n{local_text_preview}"
+        "You are extracting French tax declaration fields from the document '{filename}'.\n\
+Return ONLY valid JSON: {{\"fields\":[{{\"fieldKey\":string,\"label\":string,\
+\"mappedCategory\":string|null,\"suggestedDeclarationBox\":string|null,\
+\"valueText\":string|null,\"amountEur\":number|null,\"confidence\":number,\
+\"sourceLocator\":{{\"snippet\":string}}|null}}]}}.\n\
+\n\
+For IFU documents extract:\n\
+- DIVIDENDS (box 2DC): dividendes bruts\n\
+- INTEREST (box 2TR): intérêts\n\
+- SECURITY_GAINS (box 2074/3VG-3VH): plus-values de cession\n\
+- FEES: frais\n\
+- FOREIGN_WITHHOLDING_TAX (box 2047): retenue à la source étrangère\n\
+\n\
+For fiche de paie / bulletin de salaire documents extract:\n\
+- NET_IMPOSABLE (box 1AJ): net imposable cumulé, montant net social, totalisation brut, \
+brut imposable, net à payer avant prélèvement. Use the CUMULATIVE annual figure if present, \
+otherwise the monthly figure.\n\
+- CSG_DEDUCTIBLE: CSG déductible cumulée\n\
+- CSG_NON_DEDUCTIBLE: CSG non déductible\n\
+- HEURES_SUP (box 1GH): heures supplémentaires exonérées\n\
+- PRELEVEMENT_SOURCE: prélèvement à la source (montant retenu)\n\
+\n\
+Rules: amounts in EUR as plain numbers, confidence 0-1, omit fields not present, \
+never fabricate values.\n\
+\n\
+Document text:\n{local_text_preview}"
     )
 }
 
@@ -101,7 +121,10 @@ async fn collect_ai_response<E: AiEnvironment + 'static>(
         match event {
             AiStreamEvent::TextDelta { delta, .. } => text.push_str(&delta),
             AiStreamEvent::Done { message, .. } => {
-                text = message.get_text();
+                let done_text = message.get_text();
+                if !done_text.is_empty() {
+                    text = done_text;
+                }
                 break;
             }
             AiStreamEvent::Error { message, .. } => {
@@ -113,6 +136,18 @@ async fn collect_ai_response<E: AiEnvironment + 'static>(
     }
 
     let _ = chat_service.delete_thread(&thread_id).await;
+
+    if text.is_empty() {
+        warn!("Tax cloud extraction: model returned empty response");
+        return Err(Error::Unexpected(
+            "AI model returned an empty response. The model may not support this request format or the content was filtered.".to_string(),
+        ));
+    }
+
+    debug!(
+        "Tax cloud extraction raw response: {}",
+        &text[..text.len().min(500)]
+    );
     Ok(text)
 }
 
@@ -124,26 +159,38 @@ impl<E: AiEnvironment + 'static> TaxCloudExtractionTrait for AiTaxCloudExtractor
         content: &[u8],
         local_text_preview: &str,
     ) -> Result<Vec<NewExtractedTaxField>> {
-        let attachment = if document
+        let is_pdf = document
             .mime_type
             .as_deref()
             .map(|mime| mime.eq_ignore_ascii_case("application/pdf"))
-            .unwrap_or(false)
-        {
-            MessageAttachment {
-                name: document.filename.clone(),
-                content_type: "application/pdf".to_string(),
-                data: BASE64.encode(content),
-            }
+            .unwrap_or_else(|| document.filename.to_ascii_lowercase().ends_with(".pdf"));
+
+        // For PDFs with a text layer, the preview is embedded in the prompt — no attachment needed.
+        // For scanned/image PDFs (empty preview), fail fast with a clear error: the PDF is
+        // image-only and too large to send as base64 to any reasonable API model context window.
+        // The user must provide a text-based or OCR-processed PDF.
+        if is_pdf && local_text_preview.trim().is_empty() {
+            return Err(Error::Unexpected(
+                "This PDF appears to be a scanned image with no text layer. \
+                Cloud extraction requires a text-based PDF. \
+                Please use a PDF generated directly from payroll software, or \
+                run OCR on the file before uploading."
+                    .to_string(),
+            ));
+        }
+
+        // For plain text files, send content as a text attachment.
+        let attachments = if is_pdf {
+            None
         } else {
-            MessageAttachment {
+            Some(vec![MessageAttachment {
                 name: document.filename.clone(),
                 content_type: document
                     .mime_type
                     .clone()
                     .unwrap_or_else(|| "text/plain".to_string()),
                 data: String::from_utf8_lossy(content).to_string(),
-            }
+            }])
         };
 
         let response_text = collect_ai_response(
@@ -151,7 +198,7 @@ impl<E: AiEnvironment + 'static> TaxCloudExtractionTrait for AiTaxCloudExtractor
             SendMessageRequest {
                 content: extraction_prompt(&document.filename, local_text_preview),
                 allowed_tools: Some(Vec::new()),
-                attachments: Some(vec![attachment]),
+                attachments,
                 ..Default::default()
             },
         )
@@ -159,8 +206,13 @@ impl<E: AiEnvironment + 'static> TaxCloudExtractionTrait for AiTaxCloudExtractor
 
         let payload = extract_json_payload(&response_text);
         let envelope: CloudExtractionEnvelope = serde_json::from_str(payload).map_err(|error| {
+            warn!(
+                "Tax cloud extraction: failed to parse response. error={error} response={}",
+                &response_text[..response_text.len().min(800)]
+            );
             Error::Unexpected(format!(
-                "Failed to parse cloud extraction response: {error}"
+                "Failed to parse cloud extraction response: {error}. Raw: {}",
+                &response_text[..response_text.len().min(200)]
             ))
         })?;
 

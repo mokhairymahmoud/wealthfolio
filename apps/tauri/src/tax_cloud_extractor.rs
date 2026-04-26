@@ -126,26 +126,27 @@ impl<E: AiEnvironment + 'static> TaxCloudExtractionTrait for AiTaxCloudExtractor
         content: &[u8],
         local_text_preview: &str,
     ) -> Result<Vec<NewExtractedTaxField>> {
-        let attachment = if document
+        // For PDFs, the local_text_preview already contains the extracted text and is
+        // embedded in the prompt — sending the raw PDF binary as an attachment would
+        // add hundreds of thousands of tokens for no benefit (non-vision models can't
+        // render PDFs anyway). For plain text files, send the content as an attachment.
+        let is_pdf = document
             .mime_type
             .as_deref()
             .map(|mime| mime.eq_ignore_ascii_case("application/pdf"))
-            .unwrap_or(false)
-        {
-            MessageAttachment {
-                name: document.filename.clone(),
-                content_type: "application/pdf".to_string(),
-                data: BASE64.encode(content),
-            }
+            .unwrap_or_else(|| document.filename.to_ascii_lowercase().ends_with(".pdf"));
+
+        let attachments = if is_pdf {
+            None
         } else {
-            MessageAttachment {
+            Some(vec![MessageAttachment {
                 name: document.filename.clone(),
                 content_type: document
                     .mime_type
                     .clone()
                     .unwrap_or_else(|| "text/plain".to_string()),
                 data: String::from_utf8_lossy(content).to_string(),
-            }
+            }])
         };
 
         let response_text = collect_ai_response(
@@ -153,7 +154,7 @@ impl<E: AiEnvironment + 'static> TaxCloudExtractionTrait for AiTaxCloudExtractor
             SendMessageRequest {
                 content: extraction_prompt(&document.filename, local_text_preview),
                 allowed_tools: Some(Vec::new()),
-                attachments: Some(vec![attachment]),
+                attachments,
                 ..Default::default()
             },
         )

@@ -835,6 +835,12 @@ impl<E: AiEnvironment + 'static> ChatService<E> {
         let initial_title_clone = initial_title.clone();
         let is_new_thread_clone = is_new_thread;
         let thinking_override = request.config.as_ref().and_then(|c| c.thinking);
+        // Caller passes Some(vec![]) to explicitly disable all tools (e.g. tax extraction).
+        let disable_tools = request
+            .allowed_tools
+            .as_ref()
+            .map(|t| t.is_empty())
+            .unwrap_or(false);
 
         // Spawn the streaming task
         tokio::spawn(async move {
@@ -855,6 +861,7 @@ impl<E: AiEnvironment + 'static> ChatService<E> {
                 thinking_override,
                 prior_attachment_content_unavailable,
                 working_context,
+                disable_tools,
             )
             .await
             {
@@ -1090,6 +1097,7 @@ async fn spawn_chat_stream<E: AiEnvironment + 'static>(
     thinking_override: Option<bool>,
     prior_attachment_content_unavailable: bool,
     working_context: ChatWorkingContext,
+    disable_tools: bool,
 ) -> Result<(), AiError> {
     // Send system event first
     tx.send(AiStreamEvent::system(&thread_id, &run_id, &message_id))
@@ -1509,7 +1517,7 @@ async fn spawn_chat_stream<E: AiEnvironment + 'static>(
     };
 
     // Route to provider with tool support check
-    if capabilities.tools {
+    if capabilities.tools && !disable_tools {
         match provider_id.as_str() {
             "anthropic" => {
                 let client = create_anthropic_client(api_key, &provider_id, provider_url)?;

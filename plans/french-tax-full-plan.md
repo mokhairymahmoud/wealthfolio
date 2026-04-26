@@ -2,6 +2,162 @@
 
 > Source PRD: `docs/prd-french-tax-module.md`
 
+---
+
+## Priority Track: CDI Salary Use Case (Ship First)
+
+These phases implement the most common use case — a salaried CDI employee, no
+investment accounts — end-to-end before expanding to investments or advanced
+features.
+
+### Priority Phase A: 10% Forfaitaire + CSG Déductible in Salary Compilation
+
+**Status**: TODO  
+**Depends on**: Phase 3 (fiche de paie extraction) ← DONE
+
+Wire the already-extracted fiche de paie fields into correct taxable amounts.
+
+**What to build**: Extend `compile_salary_events()` to apply the 10% forfaitaire
+abattement from `TaxParameters.frais_professionnels` (clamp to min/max). Add
+`compile_csg_deduction()` to emit a negative FeePaid event from confirmed
+`CSG_DEDUCTIBLE` fields.
+
+**Key files**:
+
+- `crates/core/src/tax/tax_service.rs` — `compile_salary_events()` (line 936),
+  `regenerate_tax_year_report()` (line 1074)
+- `crates/core/src/tax/tax_params.rs` — `FraisProfessionnelsParams` already has
+  `abattement_rate`, `abattement_min`, `abattement_max`
+
+**Acceptance criteria**:
+
+- [ ] `compile_salary_events` applies `clamp(NET_IMPOSABLE * rate, min, max)`
+      abattement; `taxable_amount_eur = NET_IMPOSABLE - abattement`
+- [ ] A second `FeePaid` event with `category = "FRAIS_FORFAITAIRE_DEDUCTION"`
+      and `taxable_amount_eur = -abattement` is emitted
+- [ ] `compile_csg_deduction()` emits a `FeePaid` event with
+      `category = "CSG_DEDUCTIBLE_DEDUCTION"` and negative amount from confirmed
+      `CSG_DEDUCTIBLE` field
+- [ ] Called in `regenerate_tax_year_report()` after salary events
+- [ ] Unit tests: forfaitaire caps, CSG deduction, both empty when no confirmed
+      fields
+- [ ] `cargo test -p wealthfolio-core -- compile_salary compile_csg` passes
+
+---
+
+### Priority Phase B: Declaration Summary (Form 2042 Boxes)
+
+**Status**: TODO  
+**Depends on**: Priority Phase A
+
+Replace the thin `summary_json` blob with a structured box-by-box declaration
+object.
+
+**What to build**: New `DeclarationSummary` / `DeclarationBox` structs in
+`tax_model.rs`. New `build_declaration_summary()` method maps included events to
+form boxes (`1AJ`, `8TK`). Frontend card renders boxes.
+
+**Key files**:
+
+- `crates/core/src/tax/tax_model.rs` — add `DeclarationSummary`,
+  `DeclarationBox`
+- `crates/core/src/tax/tax_service.rs` — replace `json!({...})` at line 1090
+  with `build_declaration_summary()`
+- `apps/frontend/src/lib/types.ts` — mirror interfaces
+- `apps/frontend/src/pages/taxes/taxes-page.tsx` — add Declaration Summary card
+
+**Box mapping**:
+
+- `1AJ` = sum of included `SALARY_INCOME` events' `taxable_amount_eur`
+- `8TK` = max confirmed `PRELEVEMENT_SOURCE` extracted field
+- `1AK` = None until Priority Phase C
+- `frais_method` field: `"FORFAITAIRE"` or `"FRAIS_REELS"`
+
+**Acceptance criteria**:
+
+- [ ] `DeclarationSummary` and `DeclarationBox` structs added with `serde`
+      rename camelCase
+- [ ] `build_declaration_summary()` populates `1AJ` and `8TK` when data
+      available
+- [ ] `summary_json` on `TaxYearReport` now serializes `DeclarationSummary`
+- [ ] Frontend parses `summaryJson` and renders a "Form 2042" card with box ref,
+      label, amount
+- [ ] `pnpm type-check` passes
+
+---
+
+### Priority Phase C: Frais Réels Detection from Bank Transactions
+
+**Status**: TODO  
+**Depends on**: Priority Phase B
+
+Scan CASH account bank transactions for professional expense candidates. Let
+user include/exclude them. Switch to frais réels if total exceeds forfaitaire.
+
+**What to build**: `compile_frais_reels_candidates()` — keyword scan of CASH
+account activities. `with_account_service()` builder on `TaxService` (mirrors
+`with_cloud_extractor`). Frontend review table. `1AK` box populated when frais
+réels win.
+
+**Key files**:
+
+- `crates/core/src/tax/tax_service.rs` — `compile_frais_reels_candidates()`,
+  extend `build_declaration_summary()`
+- `apps/tauri/src/context/providers.rs` — wire
+  `.with_account_service(account_service.clone())` at line 362
+- `apps/frontend/src/pages/taxes/taxes-page.tsx` — Frais Réels review section
+- `crates/core/src/accounts/accounts_constants.rs` — use `account_types::CASH`
+  constant
+
+**Keyword categories** (scan `activity.notes` case-insensitive):
+
+- TRANSPORT: `ratp, sncf, navigo, transilien, metro, bus ticket`
+- MEALS: `restau, dejeuner, repas, lunch, cantine`
+- EQUIPMENT: `fnac, darty, ldlc, amazon, matériel`
+- TELECOM: `orange, sfr, bouygues, free mobile`
+
+Each candidate: `event_type = FeePaid`, `category = "FRAIS_REELS_CANDIDATE"`,
+`confidence = Low`, `included = false`, `suggested_box = "1AK"`.
+
+**Acceptance criteria**:
+
+- [ ] `with_account_service()` builder added; wired in `providers.rs`
+- [ ] CASH accounts detected automatically; their activities scanned for year
+- [ ] Keyword matches emit LOW-confidence excluded candidates in event ledger
+- [ ] If sum of included candidates > forfaitaire: `1AK` populated, `1AJ`
+      recomputed, `fraisMethod = "FRAIS_REELS"`
+- [ ] `NO_BANK_ACCOUNT_FOR_FRAIS_SCAN` warning issue emitted when no CASH
+      accounts found
+- [ ] Frontend section shows candidates with include toggle and forfaitaire
+      comparison
+- [ ] `cargo test -p wealthfolio-core -- frais_reels` passes
+
+---
+
+### Priority Phase D: UI Polish for CDI Flow
+
+**Status**: TODO  
+**Depends on**: Priority Phase C
+
+Make the declaration summary copy-ready and suppress investment-account noise.
+
+**What to build**: Copy button per box in declaration card. `fraisMethod` badge.
+Hide empty CTO section gracefully.
+
+**Key files**:
+
+- `apps/frontend/src/pages/taxes/taxes-page.tsx`
+
+**Acceptance criteria**:
+
+- [ ] Each declaration box has a "Copy" button
+- [ ] `fraisMethod` displayed as a badge ("Forfaitaire 10%" or "Frais réels")
+- [ ] Account Configuration section shows info note when no SECURITIES accounts
+      exist
+- [ ] No regressions on existing investment workflows — `cargo test` passes
+
+---
+
 ## Architectural Decisions
 
 Durable decisions that apply across all phases:
