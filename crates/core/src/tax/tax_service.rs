@@ -5,6 +5,7 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::accounts::{account_types, AccountServiceTrait};
 use crate::activities::{
     Activity, ActivityServiceTrait, ACTIVITY_TYPE_BUY, ACTIVITY_TYPE_DIVIDEND, ACTIVITY_TYPE_FEE,
     ACTIVITY_TYPE_INTEREST, ACTIVITY_TYPE_SELL, ACTIVITY_TYPE_TAX,
@@ -29,6 +30,12 @@ const CATEGORY_SECURITY_GAINS: &str = "SECURITY_GAINS";
 const CATEGORY_FEES: &str = "FEES";
 const CATEGORY_FOREIGN_WITHHOLDING_TAX: &str = "FOREIGN_WITHHOLDING_TAX";
 const CATEGORY_SALARY_INCOME: &str = "SALARY_INCOME";
+/// 10% forfaitaire abattement applied to salary income (Phase A — CDI priority track).
+const CATEGORY_FRAIS_FORFAITAIRE_DEDUCTION: &str = "FRAIS_FORFAITAIRE_DEDUCTION";
+/// CSG déductible deduction derived from confirmed fiche de paie fields (Phase A).
+const CATEGORY_CSG_DEDUCTIBLE_DEDUCTION: &str = "CSG_DEDUCTIBLE_DEDUCTION";
+/// Bank transaction flagged as a potential professional expense (Phase C).
+const CATEGORY_FRAIS_REELS_CANDIDATE: &str = "FRAIS_REELS_CANDIDATE";
 const DOCUMENT_TYPE_FICHE_DE_PAIE: &str = "FICHE_DE_PAIE";
 /// Sentinel account_id for salary events that originate from fiche de paie documents
 /// (no investment account association).
@@ -53,6 +60,7 @@ pub struct TaxService<T: TaxRepositoryTrait> {
     repository: Arc<T>,
     activity_service: Arc<dyn ActivityServiceTrait>,
     cloud_extractor: Option<Arc<dyn TaxCloudExtractionTrait>>,
+    account_service: Option<Arc<dyn AccountServiceTrait>>,
 }
 
 impl<T: TaxRepositoryTrait> TaxService<T> {
@@ -61,6 +69,7 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
             repository,
             activity_service,
             cloud_extractor: None,
+            account_service: None,
         }
     }
 
@@ -69,6 +78,11 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
         cloud_extractor: Arc<dyn TaxCloudExtractionTrait>,
     ) -> Self {
         self.cloud_extractor = Some(cloud_extractor);
+        self
+    }
+
+    pub fn with_account_service(mut self, account_service: Arc<dyn AccountServiceTrait>) -> Self {
+        self.account_service = Some(account_service);
         self
     }
 
@@ -983,23 +997,229 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
         }]
     }
 
+    /// Scan CASH account bank transactions for professional expense candidates (Phase C).
+    ///
+    /// Returns LOW-confidence, excluded FeePaid events for each transaction whose notes
+    /// match a known professional expense keyword. User reviews and includes/excludes
+    /// each candidate via the event ledger.
+    fn compile_frais_reels_candidates(&self, report: &TaxYearReport) -> Vec<CompiledTaxEvent> {
+        let account_service = match &self.account_service {
+            Some(svc) => svc,
+            None => return Vec::new(),
+        };
+
+        let all_accounts = match account_service.get_all_accounts() {
+            Ok(accounts) => accounts,
+            Err(_) => return Vec::new(),
+        };
+
+        let cash_account_ids: Vec<String> = all_accounts
+            .into_iter()
+            .filter(|a| a.account_type == account_types::CASH)
+            .map(|a| a.id)
+            .collect();
+
+        if cash_account_ids.is_empty() {
+            return Vec::new();
+        }
+
+        // Load activities for the tax year across all CASH accounts.
+        let year_start = chrono::NaiveDate::from_ymd_opt(report.tax_year, 1, 1);
+        let year_end = chrono::NaiveDate::from_ymd_opt(report.tax_year, 12, 31);
+        let search = self.activity_service.search_activities(
+            1,
+            10_000,
+            Some(cash_account_ids),
+            None,
+            None,
+            None,
+            None,
+            year_start,
+            year_end,
+            None,
+        );
+
+        let activities = match search {
+            Ok(resp) => resp.data,
+            Err(_) => return Vec::new(),
+        };
+
+        // Keyword categories for professional expense detection.
+        // Each tuple is (keyword_slice, category_hint).
+        let keyword_map: &[(&[&str], &str)] = &[
+            (
+                &[
+                    "ratp",
+                    "navigo",
+                    "sncf",
+                    "transilien",
+                    "ter ",
+                    "metro",
+                    "bus ticket",
+                    "velib",
+                ],
+                "TRANSPORT",
+            ),
+            (
+                &["restau", "dejeuner", "repas", "lunch", "cantine"],
+                "REPAS",
+            ),
+            (
+                &[
+                    "fnac",
+                    "darty",
+                    "ldlc",
+                    "matériel",
+                    "matirel",
+                    "imprimante",
+                    "clavier",
+                    "ecran",
+                ],
+                "MATERIEL",
+            ),
+            (
+                &["orange", "sfr", "bouygues", "free mobile", "forfait tel"],
+                "TELECOM",
+            ),
+        ];
+
+        let mut candidates = Vec::new();
+
+        for activity in &activities {
+            // amount and fx_rate are Option<String> in ActivityDetails — parse them.
+            let amount_str = match &activity.amount {
+                Some(s) => s,
+                None => continue,
+            };
+            let amount_parsed: Decimal = match amount_str.parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            // Only consider outgoing (negative) transactions.
+            let amount = if amount_parsed < Decimal::ZERO {
+                amount_parsed.abs()
+            } else {
+                continue;
+            };
+
+            let notes_lower = activity.comment.as_deref().unwrap_or("").to_lowercase();
+            if notes_lower.is_empty() {
+                continue;
+            }
+
+            let matched_category = keyword_map.iter().find_map(|(keywords, category)| {
+                if keywords.iter().any(|kw| notes_lower.contains(kw)) {
+                    Some(*category)
+                } else {
+                    None
+                }
+            });
+
+            if let Some(category_hint) = matched_category {
+                let fx_rate: Option<Decimal> = activity
+                    .fx_rate
+                    .as_deref()
+                    .and_then(|s| s.parse().ok())
+                    .filter(|&fx: &Decimal| fx != Decimal::ZERO);
+
+                let amount_eur = fx_rate.map(|fx| amount / fx).unwrap_or(amount);
+
+                // Use the date string as-is (already YYYY-MM-DD or RFC3339).
+                let event_date = activity
+                    .date
+                    .get(..10)
+                    .unwrap_or(&activity.date)
+                    .to_string();
+
+                candidates.push(CompiledTaxEvent {
+                    event: NewTaxEvent {
+                        event_type: TaxEventType::FeePaid,
+                        category: CATEGORY_FRAIS_REELS_CANDIDATE.to_string(),
+                        suggested_box: Some("1AK".to_string()),
+                        account_id: activity.account_id.clone(),
+                        asset_id: None,
+                        activity_id: Some(activity.id.clone()),
+                        event_date,
+                        amount_currency: activity.account_currency.clone(),
+                        amount_local: Some(-amount),
+                        amount_eur: Some(-amount_eur),
+                        taxable_amount_eur: Some(-amount_eur),
+                        expenses_eur: None,
+                        confidence: TaxConfidence::Low,
+                        included: false,
+                        notes: Some(format!(
+                            "Frais réels candidate ({category_hint}): {}",
+                            activity.comment.as_deref().unwrap_or("")
+                        )),
+                    },
+                    sources: Vec::new(),
+                    lot_allocations: Vec::new(),
+                });
+            }
+        }
+
+        candidates
+    }
+
     /// Build a structured declaration summary from compiled events and extracted fields.
     ///
     /// Populates form 2042 boxes for the CDI salary track:
-    /// - 1AJ: net imposable after abattement (sum of included SALARY_INCOME taxable amounts)
+    /// - 1AJ: net imposable (switches to frais réels base if frais réels win)
+    /// - 1AK: frais réels total (only when included candidates exceed forfaitaire)
     /// - 8TK: prélèvement à la source (max confirmed PRELEVEMENT_SOURCE field)
     fn build_declaration_summary(
         events: &[CompiledTaxEvent],
         extracted_fields: &[ExtractedTaxField],
+        tax_year: i32,
     ) -> DeclarationSummary {
         let mut boxes = Vec::new();
 
-        // 1AJ — net imposable (post-abattement taxable amount on salary events)
-        let net_imposable: Decimal = events
+        // Gross salary (amount_eur on the SALARY_INCOME event before abattement).
+        let salary_gross: Decimal = events
             .iter()
             .filter(|e| e.event.included && e.event.category == CATEGORY_SALARY_INCOME)
-            .filter_map(|e| e.event.taxable_amount_eur)
+            .filter_map(|e| e.event.amount_eur)
             .sum();
+
+        // Forfaitaire abattement from the companion deduction event.
+        let forfaitaire_abattement: Decimal = events
+            .iter()
+            .filter(|e| {
+                e.event.included && e.event.category == CATEGORY_FRAIS_FORFAITAIRE_DEDUCTION
+            })
+            .filter_map(|e| e.event.taxable_amount_eur)
+            .map(|v| v.abs())
+            .sum();
+
+        // Included frais réels candidates (user has toggled them on).
+        let frais_reels_total: Decimal = events
+            .iter()
+            .filter(|e| e.event.included && e.event.category == CATEGORY_FRAIS_REELS_CANDIDATE)
+            .filter_map(|e| e.event.taxable_amount_eur)
+            .map(|v| v.abs())
+            .sum();
+
+        // Use frais réels only if user has included candidates AND they exceed forfaitaire.
+        let params = TaxParameters::for_year_or_latest(tax_year);
+        let fp = &params.frais_professionnels;
+        let forfaitaire_min = Decimal::try_from(fp.abattement_min).unwrap_or(Decimal::new(495, 0));
+        let forfaitaire_max =
+            Decimal::try_from(fp.abattement_max).unwrap_or(Decimal::new(14_426, 0));
+        let effective_forfaitaire = if salary_gross != Decimal::ZERO {
+            (salary_gross * Decimal::try_from(fp.abattement_rate).unwrap_or(Decimal::new(10, 2)))
+                .clamp(forfaitaire_min, forfaitaire_max)
+        } else {
+            forfaitaire_abattement
+        };
+
+        let use_frais_reels =
+            frais_reels_total > Decimal::ZERO && frais_reels_total > effective_forfaitaire;
+
+        let (net_imposable, frais_method) = if use_frais_reels {
+            (salary_gross - frais_reels_total, "FRAIS_REELS")
+        } else {
+            (salary_gross - effective_forfaitaire, "FORFAITAIRE")
+        };
 
         if net_imposable != Decimal::ZERO {
             boxes.push(DeclarationBox {
@@ -1007,6 +1227,15 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                 label: "Salaires nets imposables".to_string(),
                 amount_eur: Some(net_imposable),
                 source: "FICHE_DE_PAIE".to_string(),
+            });
+        }
+
+        if use_frais_reels {
+            boxes.push(DeclarationBox {
+                box_ref: "1AK".to_string(),
+                label: "Frais réels".to_string(),
+                amount_eur: Some(frais_reels_total),
+                source: "FRAIS_REELS".to_string(),
             });
         }
 
@@ -1031,7 +1260,7 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
 
         DeclarationSummary {
             boxes,
-            frais_method: "FORFAITAIRE".to_string(),
+            frais_method: frais_method.to_string(),
             generated_at: Utc::now().to_rfc3339(),
         }
     }
@@ -1140,9 +1369,15 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         let extracted_fields = self.extracted_fields_for_report(id)?;
         let salary_events = Self::compile_salary_events(&report, &extracted_fields);
         compiled.events.extend(salary_events);
+        // Phase A: CSG déductible deduction from confirmed fiche de paie fields.
+        let csg_events = Self::compile_csg_deduction(&extracted_fields, &report);
+        compiled.events.extend(csg_events);
+        // Phase C: frais réels candidates from CASH account bank transactions.
+        let frais_candidates = self.compile_frais_reels_candidates(&report);
+        compiled.events.extend(frais_candidates);
         let reconciliation = self.build_reconciliation(id, &compiled.events, &extracted_fields);
         let declaration_summary =
-            Self::build_declaration_summary(&compiled.events, &extracted_fields);
+            Self::build_declaration_summary(&compiled.events, &extracted_fields, report.tax_year);
         let summary_json =
             serde_json::to_string(&declaration_summary).unwrap_or_else(|_| "{}".to_string());
 
@@ -2708,7 +2943,9 @@ mod tests {
         }
     }
 
-    fn make_salary_compiled_event(net_taxable: Decimal) -> CompiledTaxEvent {
+    /// Make a salary event with gross = `gross_amount` (amount_eur = gross).
+    fn make_salary_compiled_event(gross_amount: Decimal) -> CompiledTaxEvent {
+        // 10% forfaitaire on 35_000 = 3_500 → net = 31_500 (used as taxable placeholder).
         CompiledTaxEvent {
             event: NewTaxEvent {
                 event_type: TaxEventType::SalaryIncome,
@@ -2719,9 +2956,9 @@ mod tests {
                 activity_id: None,
                 event_date: "2025-12-31".to_string(),
                 amount_currency: "EUR".to_string(),
-                amount_local: Some(net_taxable),
-                amount_eur: Some(net_taxable),
-                taxable_amount_eur: Some(net_taxable),
+                amount_local: Some(gross_amount),
+                amount_eur: Some(gross_amount),
+                taxable_amount_eur: Some(gross_amount),
                 expenses_eur: None,
                 confidence: TaxConfidence::High,
                 included: true,
@@ -2754,22 +2991,26 @@ mod tests {
 
     #[test]
     fn build_declaration_summary_populates_1aj_from_salary_events() {
-        let events = vec![make_salary_compiled_event(Decimal::from(31_500u32))];
-        let summary = TaxService::<MockTaxRepository>::build_declaration_summary(&events, &[]);
+        // Gross = 35_000; 10% forfaitaire = 3_500 (within min/max) → net = 31_500.
+        let events = vec![make_salary_compiled_event(Decimal::from(35_000u32))];
+        let summary =
+            TaxService::<MockTaxRepository>::build_declaration_summary(&events, &[], 2025);
 
         let box_1aj = summary.boxes.iter().find(|b| b.box_ref == "1AJ");
         assert!(box_1aj.is_some());
         assert_eq!(box_1aj.unwrap().amount_eur, Some(Decimal::from(31_500u32)));
         assert_eq!(summary.frais_method, "FORFAITAIRE");
-        // 8TK absent — no PRELEVEMENT_SOURCE field
+        // 1AK absent in forfaitaire mode, 8TK absent — no PRELEVEMENT_SOURCE field
+        assert!(!summary.boxes.iter().any(|b| b.box_ref == "1AK"));
         assert!(!summary.boxes.iter().any(|b| b.box_ref == "8TK"));
     }
 
     #[test]
     fn build_declaration_summary_populates_8tk_from_prelevement_source() {
-        let events = vec![make_salary_compiled_event(Decimal::from(31_500u32))];
+        let events = vec![make_salary_compiled_event(Decimal::from(35_000u32))];
         let fields = vec![make_confirmed_pas_field(Decimal::from(3_500u32))];
-        let summary = TaxService::<MockTaxRepository>::build_declaration_summary(&events, &fields);
+        let summary =
+            TaxService::<MockTaxRepository>::build_declaration_summary(&events, &fields, 2025);
 
         let box_8tk = summary.boxes.iter().find(|b| b.box_ref == "8TK");
         assert!(box_8tk.is_some());
@@ -2778,7 +3019,44 @@ mod tests {
 
     #[test]
     fn build_declaration_summary_empty_when_no_salary_events() {
-        let summary = TaxService::<MockTaxRepository>::build_declaration_summary(&[], &[]);
+        let summary = TaxService::<MockTaxRepository>::build_declaration_summary(&[], &[], 2025);
         assert!(summary.boxes.is_empty());
+    }
+
+    #[test]
+    fn build_declaration_summary_uses_frais_reels_when_they_exceed_forfaitaire() {
+        // Gross = 35_000; forfaitaire = 3_500.
+        // Frais réels = 5_000 (included) → should win → 1AJ = 30_000, 1AK = 5_000.
+        let salary_event = make_salary_compiled_event(Decimal::from(35_000u32));
+        let frais_event = CompiledTaxEvent {
+            event: NewTaxEvent {
+                event_type: TaxEventType::FeePaid,
+                category: CATEGORY_FRAIS_REELS_CANDIDATE.to_string(),
+                suggested_box: Some("1AK".to_string()),
+                account_id: "acc-1".to_string(),
+                asset_id: None,
+                activity_id: Some("act-1".to_string()),
+                event_date: "2025-06-01".to_string(),
+                amount_currency: "EUR".to_string(),
+                amount_local: Some(Decimal::from(-5_000i32)),
+                amount_eur: Some(Decimal::from(-5_000i32)),
+                taxable_amount_eur: Some(Decimal::from(-5_000i32)),
+                expenses_eur: None,
+                confidence: TaxConfidence::Low,
+                included: true,
+                notes: None,
+            },
+            sources: Vec::new(),
+            lot_allocations: Vec::new(),
+        };
+        let events = vec![salary_event, frais_event];
+        let summary =
+            TaxService::<MockTaxRepository>::build_declaration_summary(&events, &[], 2025);
+
+        assert_eq!(summary.frais_method, "FRAIS_REELS");
+        let box_1aj = summary.boxes.iter().find(|b| b.box_ref == "1AJ").unwrap();
+        assert_eq!(box_1aj.amount_eur, Some(Decimal::from(30_000u32)));
+        let box_1ak = summary.boxes.iter().find(|b| b.box_ref == "1AK").unwrap();
+        assert_eq!(box_1ak.amount_eur, Some(Decimal::from(5_000u32)));
     }
 }

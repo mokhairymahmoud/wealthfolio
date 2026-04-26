@@ -477,7 +477,8 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     let tax_cloud_extractor = Arc::new(AiTaxCloudExtractor::new(ai_chat_service.clone()));
     let tax_service: Arc<dyn TaxServiceTrait + Send + Sync> = Arc::new(
         TaxService::new(tax_repository, activity_service.clone())
-            .with_cloud_extractor(tax_cloud_extractor),
+            .with_cloud_extractor(tax_cloud_extractor)
+            .with_account_service(account_service.clone()),
     );
 
     // Device enroll service for E2EE sync

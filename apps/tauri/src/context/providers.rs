@@ -368,7 +368,8 @@ pub async fn initialize_context(
     let tax_cloud_extractor = Arc::new(AiTaxCloudExtractor::new(ai_chat_service.clone()));
     let tax_service = Arc::new(
         TaxService::new(tax_repository.clone(), activity_service.clone())
-            .with_cloud_extractor(tax_cloud_extractor),
+            .with_cloud_extractor(tax_cloud_extractor)
+            .with_account_service(account_service.clone()),
     );
 
     // Device enroll service for E2EE sync

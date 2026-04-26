@@ -1613,6 +1613,79 @@ export default function TaxesPage() {
         </Card>
       </div>
 
+      {selectedReport &&
+        (() => {
+          const fraisCandidates = (reportDetail?.events ?? []).filter(
+            (e) => e.category === "FRAIS_REELS_CANDIDATE",
+          );
+          if (fraisCandidates.length === 0) return null;
+
+          const includedTotal = fraisCandidates
+            .filter((e) => e.included)
+            .reduce(
+              (sum, e) =>
+                sum + (e.taxableAmountEur != null ? Math.abs(Number(e.taxableAmountEur)) : 0),
+              0,
+            );
+
+          return (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between gap-2">
+                  <span>Frais Réels Candidates</span>
+                  <div className="flex items-center gap-2 text-sm font-normal">
+                    <span className="text-muted-foreground">Included total:</span>
+                    <span className="font-medium">{formatAmount(includedTotal)}</span>
+                  </div>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10">Incl.</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {fraisCandidates.map((event) => (
+                      <TableRow key={event.id}>
+                        <TableCell>
+                          <Checkbox
+                            checked={event.included}
+                            disabled={isReportLocked || updateTaxEventMutation.isPending}
+                            onCheckedChange={(checked) =>
+                              updateTaxEventMutation.mutate({
+                                id: event.id,
+                                included: checked === true,
+                                taxableAmountEur: event.taxableAmountEur as number | null,
+                                notes: event.notes ?? null,
+                              })
+                            }
+                          />
+                        </TableCell>
+                        <TableCell className="text-sm">{event.eventDate}</TableCell>
+                        <TableCell className="text-sm">
+                          {event.notes?.replace("Frais réels candidate ", "") ?? "-"}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">
+                          {formatAmount(
+                            event.taxableAmountEur != null
+                              ? Math.abs(Number(event.taxableAmountEur))
+                              : null,
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          );
+        })()}
+
       {selectedReport && (
         <Card>
           <CardHeader>
