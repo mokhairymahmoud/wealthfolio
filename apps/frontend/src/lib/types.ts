@@ -128,6 +128,19 @@ export interface TaxYearReport {
   updatedAt: string;
 }
 
+export interface DeclarationBox {
+  boxRef: string;
+  label: string;
+  amountEur: number | null;
+  source: string;
+}
+
+export interface DeclarationSummary {
+  boxes: DeclarationBox[];
+  fraisMethod: string;
+  generatedAt: string;
+}
+
 export interface NewTaxYearReport {
   taxYear: number;
   jurisdiction?: string | null;

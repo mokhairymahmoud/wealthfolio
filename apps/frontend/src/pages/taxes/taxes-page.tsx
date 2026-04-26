@@ -24,6 +24,7 @@ import { QueryKeys } from "@/lib/query-keys";
 import type {
   Account,
   AccountTaxProfile,
+  DeclarationSummary,
   TaxEvent,
   TaxEventUpdate,
   TaxProfileUpdate,
@@ -1385,6 +1386,68 @@ export default function TaxesPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {selectedReport &&
+        (() => {
+          let declarationSummary: DeclarationSummary | null = null;
+          try {
+            declarationSummary = JSON.parse(selectedReport.summaryJson) as DeclarationSummary;
+            if (!Array.isArray(declarationSummary?.boxes)) declarationSummary = null;
+          } catch {
+            declarationSummary = null;
+          }
+          return declarationSummary && declarationSummary.boxes.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between gap-2">
+                  <span>Declaration — Formulaire 2042</span>
+                  <Badge variant="outline">
+                    {declarationSummary.fraisMethod === "FRAIS_REELS"
+                      ? "Frais réels"
+                      : "Forfaitaire 10%"}
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-20">Box</TableHead>
+                      <TableHead>Label</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                      <TableHead className="w-32 text-right">Copy</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {declarationSummary.boxes.map((box) => (
+                      <TableRow key={box.boxRef}>
+                        <TableCell className="font-mono font-semibold">{box.boxRef}</TableCell>
+                        <TableCell>{box.label}</TableCell>
+                        <TableCell className="text-right font-medium">
+                          {formatAmount(box.amountEur)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              if (box.amountEur != null) {
+                                void navigator.clipboard.writeText(String(box.amountEur));
+                              }
+                            }}
+                            disabled={box.amountEur == null}
+                          >
+                            Copy
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          ) : null;
+        })()}
 
       {selectedReport && (
         <div className="grid gap-4 md:grid-cols-3">

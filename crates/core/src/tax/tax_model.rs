@@ -503,6 +503,27 @@ pub struct TaxReconciliationEntryUpdate {
     pub notes: Option<String>,
 }
 
+/// One form box in the declaration summary (e.g. 1AJ, 8TK).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclarationBox {
+    pub box_ref: String,
+    pub label: String,
+    pub amount_eur: Option<Decimal>,
+    /// Where the value came from: "FICHE_DE_PAIE", "COMPUTED", etc.
+    pub source: String,
+}
+
+/// Structured snapshot of the declaration, stored in `summary_json` on `TaxYearReport`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclarationSummary {
+    pub boxes: Vec<DeclarationBox>,
+    /// "FORFAITAIRE" or "FRAIS_REELS"
+    pub frais_method: String,
+    pub generated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TaxReportDetail {

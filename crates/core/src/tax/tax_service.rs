@@ -11,14 +11,15 @@ use crate::activities::{
 };
 use crate::errors::{Error, Result, ValidationError};
 use crate::tax::{
-    AccountTaxProfile, AccountTaxProfileUpdate, CompiledTaxEvent, ExtractedTaxField,
-    ExtractedTaxFieldUpdate, NewExtractedTaxField, NewTaxEvent, NewTaxEventSource, NewTaxIssue,
-    NewTaxLotAllocation, NewTaxReconciliationEntry, NewTaxYearReport, TaxCloudExtractionTrait,
-    TaxConfidence, TaxDocument, TaxDocumentDownload, TaxDocumentExtractionRequest,
-    TaxDocumentExtractionResult, TaxDocumentUpload, TaxEvent, TaxEventType, TaxEventUpdate,
-    TaxParameters, TaxProfile, TaxProfileUpdate, TaxReconciliationEntry,
-    TaxReconciliationEntryUpdate, TaxReportDetail, TaxReportStatus, TaxRepositoryTrait,
-    TaxServiceTrait, TaxYearReport, DEFAULT_TAX_JURISDICTION, DEFAULT_TAX_REGIME,
+    AccountTaxProfile, AccountTaxProfileUpdate, CompiledTaxEvent, DeclarationBox,
+    DeclarationSummary, ExtractedTaxField, ExtractedTaxFieldUpdate, NewExtractedTaxField,
+    NewTaxEvent, NewTaxEventSource, NewTaxIssue, NewTaxLotAllocation, NewTaxReconciliationEntry,
+    NewTaxYearReport, TaxCloudExtractionTrait, TaxConfidence, TaxDocument, TaxDocumentDownload,
+    TaxDocumentExtractionRequest, TaxDocumentExtractionResult, TaxDocumentUpload, TaxEvent,
+    TaxEventType, TaxEventUpdate, TaxParameters, TaxProfile, TaxProfileUpdate,
+    TaxReconciliationEntry, TaxReconciliationEntryUpdate, TaxReportDetail, TaxReportStatus,
+    TaxRepositoryTrait, TaxServiceTrait, TaxYearReport, DEFAULT_TAX_JURISDICTION,
+    DEFAULT_TAX_REGIME,
 };
 
 const TAX_REGIME_CTO: &str = "CTO";
@@ -981,6 +982,59 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
             lot_allocations: Vec::new(),
         }]
     }
+
+    /// Build a structured declaration summary from compiled events and extracted fields.
+    ///
+    /// Populates form 2042 boxes for the CDI salary track:
+    /// - 1AJ: net imposable after abattement (sum of included SALARY_INCOME taxable amounts)
+    /// - 8TK: prélèvement à la source (max confirmed PRELEVEMENT_SOURCE field)
+    fn build_declaration_summary(
+        events: &[CompiledTaxEvent],
+        extracted_fields: &[ExtractedTaxField],
+    ) -> DeclarationSummary {
+        let mut boxes = Vec::new();
+
+        // 1AJ — net imposable (post-abattement taxable amount on salary events)
+        let net_imposable: Decimal = events
+            .iter()
+            .filter(|e| e.event.included && e.event.category == CATEGORY_SALARY_INCOME)
+            .filter_map(|e| e.event.taxable_amount_eur)
+            .sum();
+
+        if net_imposable != Decimal::ZERO {
+            boxes.push(DeclarationBox {
+                box_ref: "1AJ".to_string(),
+                label: "Salaires nets imposables".to_string(),
+                amount_eur: Some(net_imposable),
+                source: "FICHE_DE_PAIE".to_string(),
+            });
+        }
+
+        // 8TK — prélèvement à la source withheld by employer
+        let pas_amount: Option<Decimal> = extracted_fields
+            .iter()
+            .filter(|f| {
+                matches!(f.status.as_str(), "CONFIRMED" | "CORRECTED")
+                    && f.field_key == "PRELEVEMENT_SOURCE"
+            })
+            .filter_map(|f| f.confirmed_amount_eur.or(f.amount_eur))
+            .reduce(Decimal::max);
+
+        if let Some(pas) = pas_amount {
+            boxes.push(DeclarationBox {
+                box_ref: "8TK".to_string(),
+                label: "Prélèvement à la source versé".to_string(),
+                amount_eur: Some(pas),
+                source: "FICHE_DE_PAIE".to_string(),
+            });
+        }
+
+        DeclarationSummary {
+            boxes,
+            frais_method: "FORFAITAIRE".to_string(),
+            generated_at: Utc::now().to_rfc3339(),
+        }
+    }
 }
 
 #[async_trait]
@@ -1087,14 +1141,10 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         let salary_events = Self::compile_salary_events(&report, &extracted_fields);
         compiled.events.extend(salary_events);
         let reconciliation = self.build_reconciliation(id, &compiled.events, &extracted_fields);
-        let summary_json = json!({
-            "eventCount": compiled.events.len(),
-            "includedEventCount": compiled.events.iter().filter(|event| event.event.included).count(),
-            "issueCount": compiled.issues.len(),
-            "reconciliationCount": reconciliation.len(),
-            "generatedAt": Utc::now().to_rfc3339(),
-        })
-        .to_string();
+        let declaration_summary =
+            Self::build_declaration_summary(&compiled.events, &extracted_fields);
+        let summary_json =
+            serde_json::to_string(&declaration_summary).unwrap_or_else(|_| "{}".to_string());
 
         self.repository
             .replace_generated_report_data(
@@ -2656,5 +2706,79 @@ mod tests {
             status: "SUGGESTED".to_string(),
             ..make_confirmed_field(key, amount)
         }
+    }
+
+    fn make_salary_compiled_event(net_taxable: Decimal) -> CompiledTaxEvent {
+        CompiledTaxEvent {
+            event: NewTaxEvent {
+                event_type: TaxEventType::SalaryIncome,
+                category: CATEGORY_SALARY_INCOME.to_string(),
+                suggested_box: Some("1AJ".to_string()),
+                account_id: SALARY_VIRTUAL_ACCOUNT_ID.to_string(),
+                asset_id: None,
+                activity_id: None,
+                event_date: "2025-12-31".to_string(),
+                amount_currency: "EUR".to_string(),
+                amount_local: Some(net_taxable),
+                amount_eur: Some(net_taxable),
+                taxable_amount_eur: Some(net_taxable),
+                expenses_eur: None,
+                confidence: TaxConfidence::High,
+                included: true,
+                notes: None,
+            },
+            sources: Vec::new(),
+            lot_allocations: Vec::new(),
+        }
+    }
+
+    fn make_confirmed_pas_field(amount: Decimal) -> ExtractedTaxField {
+        use chrono::NaiveDateTime;
+        ExtractedTaxField {
+            id: uuid::Uuid::new_v4().to_string(),
+            extraction_id: "extraction-1".to_string(),
+            field_key: "PRELEVEMENT_SOURCE".to_string(),
+            label: "Prélèvement à la source".to_string(),
+            mapped_category: None,
+            suggested_declaration_box: None,
+            source_locator_json: None,
+            value_text: None,
+            amount_eur: Some(amount),
+            confidence: 0.9,
+            status: "CONFIRMED".to_string(),
+            confirmed_amount_eur: None,
+            created_at: NaiveDateTime::default(),
+            updated_at: NaiveDateTime::default(),
+        }
+    }
+
+    #[test]
+    fn build_declaration_summary_populates_1aj_from_salary_events() {
+        let events = vec![make_salary_compiled_event(Decimal::from(31_500u32))];
+        let summary = TaxService::<MockTaxRepository>::build_declaration_summary(&events, &[]);
+
+        let box_1aj = summary.boxes.iter().find(|b| b.box_ref == "1AJ");
+        assert!(box_1aj.is_some());
+        assert_eq!(box_1aj.unwrap().amount_eur, Some(Decimal::from(31_500u32)));
+        assert_eq!(summary.frais_method, "FORFAITAIRE");
+        // 8TK absent — no PRELEVEMENT_SOURCE field
+        assert!(!summary.boxes.iter().any(|b| b.box_ref == "8TK"));
+    }
+
+    #[test]
+    fn build_declaration_summary_populates_8tk_from_prelevement_source() {
+        let events = vec![make_salary_compiled_event(Decimal::from(31_500u32))];
+        let fields = vec![make_confirmed_pas_field(Decimal::from(3_500u32))];
+        let summary = TaxService::<MockTaxRepository>::build_declaration_summary(&events, &fields);
+
+        let box_8tk = summary.boxes.iter().find(|b| b.box_ref == "8TK");
+        assert!(box_8tk.is_some());
+        assert_eq!(box_8tk.unwrap().amount_eur, Some(Decimal::from(3_500u32)));
+    }
+
+    #[test]
+    fn build_declaration_summary_empty_when_no_salary_events() {
+        let summary = TaxService::<MockTaxRepository>::build_declaration_summary(&[], &[]);
+        assert!(summary.boxes.is_empty());
     }
 }
