@@ -71,7 +71,7 @@ End-to-end: migration → model → service → API/commands → adapter → UI 
 
 ## Phase 2: Tax Parameters Config
 
-**Status**: TODO
+**Status**: COMPLETE
 
 **User stories**: Tax calculations use correct yearly rates. Historical reports
 stay accurate after parameter updates.
@@ -85,18 +85,18 @@ set.
 
 ### Acceptance criteria
 
-- [ ] `tax_params_2025.toml` file with all French tax parameters for 2025
-- [ ] Rust struct `TaxParameters` deserializable from TOML
-- [ ] Tax service loads parameters by tax year
-- [ ] Existing hardcoded values replaced with parameter lookups
-- [ ] `rule_pack_version` format updated to reference parameter version
-- [ ] Unit tests verify parameter loading and fallback behavior
+- [x] `tax_params_2025.toml` file with all French tax parameters for 2025
+- [x] Rust struct `TaxParameters` deserializable from TOML
+- [x] Tax service loads parameters by tax year
+- [x] Existing hardcoded values replaced with parameter lookups
+- [x] `rule_pack_version` format updated to reference parameter version
+- [x] Unit tests verify parameter loading and fallback behavior
 
 ---
 
 ## Phase 3: Fiche de Paie Extraction + Salary Income
 
-**Status**: TODO
+**Status**: COMPLETE
 
 **User stories**: User uploads fiche de paie, salary data flows into declaration
 automatically via LLM extraction.
@@ -110,14 +110,14 @@ tracking, only latest cumul used for declaration.
 
 ### Acceptance criteria
 
-- [ ] `FICHE_DE_PAIE` document type supported in upload/extraction
-- [ ] LLM extraction schema defined for fiche de paie fields
-- [ ] Extracted salary data creates `TaxEvent` of new type `SALARY_INCOME` (box
+- [x] `FICHE_DE_PAIE` document type supported in upload/extraction
+- [x] LLM extraction schema defined for fiche de paie fields
+- [x] Extracted salary data creates `TaxEvent` of new type `SALARY_INCOME` (box
       1AJ)
-- [ ] User confirms/corrects extracted values before inclusion
-- [ ] Multiple fiches per year tracked; only latest cumul annuel used for tax
+- [x] User confirms/corrects extracted values before inclusion
+- [x] Multiple fiches per year tracked; only latest cumul annuel used for tax
       calculation
-- [ ] UI shows fiche de paie upload section distinct from IFU section
+- [x] UI shows fiche de paie upload section distinct from IFU section
 
 ---
 

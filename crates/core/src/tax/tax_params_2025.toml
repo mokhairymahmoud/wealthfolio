@@ -1,0 +1,67 @@
+# French tax parameters for 2025 (revenus 2025, déclaration 2026)
+# Source: https://www.impots.gouv.fr
+version = "FR-2025-v1"
+tax_year = 2025
+jurisdiction = "FR"
+
+# Prélèvement Forfaitaire Unique (PFU / flat tax)
+[pfu]
+# Impôt sur le revenu flat rate
+ir_rate = 0.128
+# Prélèvements sociaux flat rate
+ps_rate = 0.172
+# Combined PFU rate
+total_rate = 0.300
+
+# Prélèvements sociaux (used in barème mode too)
+[prelevements_sociaux]
+# Total rate applied in both PFU and barème modes
+total_rate = 0.172
+# Portion déductible du revenu imposable (in barème mode)
+csg_deductible_rate = 0.068
+
+# Barème progressif de l'impôt sur le revenu
+# Applied to revenu net imposable divided by nombre_parts (quotient familial),
+# then multiplied back by nombre_parts.
+# Tranches for 2025 income (2026 declaration).
+[[bareme.tranches]]
+min = 0
+max = 11497
+rate = 0.00
+
+[[bareme.tranches]]
+min = 11497
+max = 29315
+rate = 0.11
+
+[[bareme.tranches]]
+min = 29315
+max = 83823
+rate = 0.30
+
+[[bareme.tranches]]
+min = 83823
+max = 180294
+rate = 0.41
+
+[[bareme.tranches]]
+min = 180294
+# No upper bound for the top tranche (use max = null sentinel: 0 means unbounded)
+max = 0
+rate = 0.45
+
+# Plafond du quotient familial
+# Maximum tax reduction per half-part beyond 1 (célibataire) or 2 (marié/pacsé)
+[quotient_familial]
+# Plafond annuel de l'avantage fiscal par demi-part supplémentaire
+plafond_demi_part = 1771.0
+
+# Abattement sur les dividendes (barème mode only)
+[dividendes]
+abattement_rate = 0.40
+
+# Abattement forfaitaire pour frais professionnels (salaires)
+[frais_professionnels]
+abattement_rate = 0.10
+abattement_min = 495.0
+abattement_max = 14426.0

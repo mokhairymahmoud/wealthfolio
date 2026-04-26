@@ -14,6 +14,7 @@ fn make_holding(id: &str, account_id: &str, mv_base: Decimal) -> Holding {
             symbol: id.to_string(),
             name: Some(format!("{} Fund", id)),
             currency: "USD".to_string(),
+            exchange_mic: None,
             notes: None,
             pricing_mode: "MARKET".to_string(),
             preferred_provider: None,

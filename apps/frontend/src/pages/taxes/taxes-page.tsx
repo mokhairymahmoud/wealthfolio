@@ -504,6 +504,169 @@ function ExtractionFieldRow({
   );
 }
 
+interface DocumentUploadCardProps {
+  title: string;
+  documents: Array<{
+    id: string;
+    filename: string;
+    documentType: string;
+    sizeBytes: number;
+    sha256: string;
+  }>;
+  isLoading: boolean;
+  isReportLocked: boolean;
+  selectedFile: File | null;
+  onFileChange: (file: File | null) => void;
+  onUpload: () => void;
+  isUploading: boolean;
+  latestExtractionByDocument: Map<string, { extraction: { method: string; status: string } }>;
+  rerunExtractionMutation: {
+    mutate: (args: { documentId: string; method: string; consentGranted: boolean }) => void;
+    isPending: boolean;
+  };
+  onCloudExtract: (documentId: string) => void;
+  onPreview: (documentId: string) => void;
+  downloadDocumentMutation: { mutate: (documentId: string) => void; isPending: boolean };
+  deleteDocumentMutation: { mutate: (documentId: string) => void; isPending: boolean };
+  emptyText: string;
+}
+
+function DocumentUploadCard({
+  title,
+  documents,
+  isLoading,
+  isReportLocked,
+  selectedFile,
+  onFileChange,
+  onUpload,
+  isUploading,
+  latestExtractionByDocument,
+  rerunExtractionMutation,
+  onCloudExtract,
+  onPreview,
+  downloadDocumentMutation,
+  deleteDocumentMutation,
+  emptyText,
+}: DocumentUploadCardProps) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Icons.Upload className="h-5 w-5" />
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="border-input bg-background h-9 rounded-md border px-3 py-1 text-sm"
+            type="file"
+            accept=".pdf,.txt,.csv,text/*,application/pdf"
+            disabled={isReportLocked}
+            onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
+          />
+          <Button
+            size="sm"
+            onClick={onUpload}
+            disabled={!selectedFile || isUploading || isReportLocked}
+          >
+            {isUploading ? (
+              <Icons.Spinner className="h-4 w-4 animate-spin" />
+            ) : (
+              <Icons.FileText className="h-4 w-4" />
+            )}
+            Upload + Extract
+          </Button>
+        </div>
+        <div className="space-y-2">
+          {documents.map((document) => (
+            <div
+              key={document.id}
+              className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm"
+            >
+              <div>
+                <div className="font-medium">{document.filename}</div>
+                <div className="text-muted-foreground text-xs">
+                  {document.documentType} · {Math.round(document.sizeBytes / 1024)} KB
+                </div>
+                <div className="text-muted-foreground text-xs">SHA-256 {document.sha256}</div>
+                {latestExtractionByDocument.get(document.id) && (
+                  <div className="text-muted-foreground mt-1 text-xs">
+                    Latest extraction:{" "}
+                    {latestExtractionByDocument.get(document.id)?.extraction.method} ·{" "}
+                    <span className="font-medium">
+                      {latestExtractionByDocument.get(document.id)?.extraction.status}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">Encrypted</Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isReportLocked || rerunExtractionMutation.isPending}
+                  onClick={() =>
+                    rerunExtractionMutation.mutate({
+                      documentId: document.id,
+                      method: "LOCAL_TEXT",
+                      consentGranted: false,
+                    })
+                  }
+                >
+                  Re-extract
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isReportLocked || rerunExtractionMutation.isPending}
+                  onClick={() => onCloudExtract(document.id)}
+                >
+                  Use Cloud
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!latestExtractionByDocument.get(document.id)}
+                  onClick={() => onPreview(document.id)}
+                >
+                  Preview Text
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="Download document"
+                  disabled={downloadDocumentMutation.isPending}
+                  onClick={() => downloadDocumentMutation.mutate(document.id)}
+                >
+                  <Icons.Download className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="Delete document"
+                  disabled={deleteDocumentMutation.isPending || isReportLocked}
+                  onClick={() => {
+                    if (window.confirm(`Delete ${document.filename}?`)) {
+                      deleteDocumentMutation.mutate(document.id);
+                    }
+                  }}
+                >
+                  <Icons.Trash className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          ))}
+          {isLoading && <Skeleton className="h-12" />}
+          {!isLoading && documents.length === 0 && (
+            <div className="text-muted-foreground text-sm">{emptyText}</div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function TaxesSkeleton() {
   return (
     <div className="space-y-4 p-4">
@@ -522,6 +685,7 @@ export default function TaxesPage() {
   const queryClient = useQueryClient();
   const [taxYear, setTaxYear] = useState(currentTaxYear());
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFicheFile, setSelectedFicheFile] = useState<File | null>(null);
   const [cloudExtractionDocumentId, setCloudExtractionDocumentId] = useState<string | null>(null);
 
   const { data: profile, isLoading: isProfileLoading } = useQuery({
@@ -610,6 +774,33 @@ export default function TaxesPage() {
     },
     onSuccess: () => {
       setSelectedFile(null);
+      if (selectedReport) {
+        queryClient.invalidateQueries({ queryKey: QueryKeys.taxReportDetail(selectedReport.id) });
+      }
+    },
+  });
+
+  const uploadFicheDocumentMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedReport || !selectedFicheFile) {
+        throw new Error("Missing report or document");
+      }
+      const content = Array.from(new Uint8Array(await selectedFicheFile.arrayBuffer()));
+      const document = await uploadTaxDocument({
+        reportId: selectedReport.id,
+        documentType: "FICHE_DE_PAIE",
+        filename: selectedFicheFile.name,
+        mimeType: selectedFicheFile.type || null,
+        content,
+      });
+      return extractTaxDocument({
+        documentId: document.id,
+        method: "LOCAL_TEXT",
+        consentGranted: false,
+      });
+    },
+    onSuccess: () => {
+      setSelectedFicheFile(null);
       if (selectedReport) {
         queryClient.invalidateQueries({ queryKey: QueryKeys.taxReportDetail(selectedReport.id) });
       }
@@ -815,6 +1006,7 @@ export default function TaxesPage() {
       }, 0);
 
     return {
+      salaryIncome: sumCategory(["SALARY_INCOME"]),
       taxableIncome: sumCategory(["DIVIDENDS", "INTEREST"]),
       realizedGains: sumCategory(["SECURITY_GAINS"]),
       withholdingTax: sumCategory(["FOREIGN_WITHHOLDING_TAX"]),
@@ -1045,7 +1237,18 @@ export default function TaxesPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-5">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Salary Income</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold">{formatAmount(summary.salaryIncome)}</div>
+            <p className="text-muted-foreground text-xs">
+              Net imposable from fiche de paie (box 1AJ)
+            </p>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Taxable Income</CardTitle>
@@ -1175,124 +1378,44 @@ export default function TaxesPage() {
       </Card>
 
       {selectedReport && (
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Icons.Upload className="h-5 w-5" />
-                IFU Documents
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  className="border-input bg-background h-9 rounded-md border px-3 py-1 text-sm"
-                  type="file"
-                  accept=".pdf,.txt,.csv,text/*,application/pdf"
-                  disabled={isReportLocked}
-                  onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-                />
-                <Button
-                  size="sm"
-                  onClick={() => uploadDocumentMutation.mutate()}
-                  disabled={!selectedFile || uploadDocumentMutation.isPending || isReportLocked}
-                >
-                  {uploadDocumentMutation.isPending ? (
-                    <Icons.Spinner className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Icons.FileText className="h-4 w-4" />
-                  )}
-                  Upload + Extract
-                </Button>
-              </div>
-              <div className="space-y-2">
-                {(reportDetail?.documents ?? []).map((document) => (
-                  <div
-                    key={document.id}
-                    className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm"
-                  >
-                    <div>
-                      <div className="font-medium">{document.filename}</div>
-                      <div className="text-muted-foreground text-xs">
-                        {document.documentType} · {Math.round(document.sizeBytes / 1024)} KB
-                      </div>
-                      <div className="text-muted-foreground text-xs">SHA-256 {document.sha256}</div>
-                      {latestExtractionByDocument.get(document.id) && (
-                        <div className="text-muted-foreground mt-1 text-xs">
-                          Latest extraction:{" "}
-                          {latestExtractionByDocument.get(document.id)?.extraction.method} ·{" "}
-                          <span className="font-medium">
-                            {latestExtractionByDocument.get(document.id)?.extraction.status}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">Encrypted</Badge>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isReportLocked || rerunExtractionMutation.isPending}
-                        onClick={() =>
-                          rerunExtractionMutation.mutate({
-                            documentId: document.id,
-                            method: "LOCAL_TEXT",
-                            consentGranted: false,
-                          })
-                        }
-                      >
-                        Re-extract
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isReportLocked || rerunExtractionMutation.isPending}
-                        onClick={() => setCloudExtractionDocumentId(document.id)}
-                      >
-                        Use Cloud
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={!latestExtractionByDocument.get(document.id)}
-                        onClick={() => setPreviewDocumentId(document.id)}
-                      >
-                        Preview Text
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label="Download document"
-                        disabled={downloadDocumentMutation.isPending}
-                        onClick={() => downloadDocumentMutation.mutate(document.id)}
-                      >
-                        <Icons.Download className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label="Delete document"
-                        disabled={
-                          deleteDocumentMutation.isPending || selectedReport?.status === "FINALIZED"
-                        }
-                        onClick={() => {
-                          if (window.confirm(`Delete ${document.filename}?`)) {
-                            deleteDocumentMutation.mutate(document.id);
-                          }
-                        }}
-                      >
-                        <Icons.Trash className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                {isReportDetailLoading && <Skeleton className="h-12" />}
-                {!isReportDetailLoading && (reportDetail?.documents ?? []).length === 0 && (
-                  <div className="text-muted-foreground text-sm">No IFU document uploaded.</div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+        <div className="grid gap-4 md:grid-cols-3">
+          <DocumentUploadCard
+            title="IFU Documents"
+            documents={(reportDetail?.documents ?? []).filter((d) => d.documentType === "IFU")}
+            isLoading={isReportDetailLoading}
+            isReportLocked={isReportLocked}
+            selectedFile={selectedFile}
+            onFileChange={(file) => setSelectedFile(file)}
+            onUpload={() => uploadDocumentMutation.mutate()}
+            isUploading={uploadDocumentMutation.isPending}
+            latestExtractionByDocument={latestExtractionByDocument}
+            rerunExtractionMutation={rerunExtractionMutation}
+            onCloudExtract={(id) => setCloudExtractionDocumentId(id)}
+            onPreview={(id) => setPreviewDocumentId(id)}
+            downloadDocumentMutation={downloadDocumentMutation}
+            deleteDocumentMutation={deleteDocumentMutation}
+            emptyText="No IFU document uploaded."
+          />
+
+          <DocumentUploadCard
+            title="Fiches de Paie"
+            documents={(reportDetail?.documents ?? []).filter(
+              (d) => d.documentType === "FICHE_DE_PAIE",
+            )}
+            isLoading={isReportDetailLoading}
+            isReportLocked={isReportLocked}
+            selectedFile={selectedFicheFile}
+            onFileChange={(file) => setSelectedFicheFile(file)}
+            onUpload={() => uploadFicheDocumentMutation.mutate()}
+            isUploading={uploadFicheDocumentMutation.isPending}
+            latestExtractionByDocument={latestExtractionByDocument}
+            rerunExtractionMutation={rerunExtractionMutation}
+            onCloudExtract={(id) => setCloudExtractionDocumentId(id)}
+            onPreview={(id) => setPreviewDocumentId(id)}
+            downloadDocumentMutation={downloadDocumentMutation}
+            deleteDocumentMutation={deleteDocumentMutation}
+            emptyText="No fiche de paie uploaded. Upload the last pay slip of the year (cumul annuel)."
+          />
 
           <Card>
             <CardHeader>
@@ -1324,7 +1447,7 @@ export default function TaxesPage() {
                   {extractedFields.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={4} className="text-muted-foreground py-8 text-center">
-                        No extracted IFU fields.
+                        No extracted fields yet.
                       </TableCell>
                     </TableRow>
                   )}

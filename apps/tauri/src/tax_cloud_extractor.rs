@@ -44,7 +44,9 @@ fn extraction_prompt(filename: &str, local_text_preview: &str) -> String {
     format!(
         "You are extracting French tax declaration fields from the document '{filename}'. \
 Return ONLY valid JSON with this exact shape: \
-{{\"fields\":[{{\"fieldKey\":\"DIVIDENDS\"|\"INTEREST\"|\"SECURITY_GAINS\"|\"FEES\",\"label\":string,\"mappedCategory\":string|null,\"suggestedDeclarationBox\":string|null,\"valueText\":string|null,\"amountEur\":number|null,\"confidence\":number,\"sourceLocator\":object|null}}]}}. \
+{{\"fields\":[{{\"fieldKey\":\"DIVIDENDS\"|\"INTEREST\"|\"SECURITY_GAINS\"|\"FEES\"|\"NET_IMPOSABLE\"|\"CSG_DEDUCTIBLE\"|\"HEURES_SUP\",\"label\":string,\"mappedCategory\":string|null,\"suggestedDeclarationBox\":string|null,\"valueText\":string|null,\"amountEur\":number|null,\"confidence\":number,\"sourceLocator\":object|null}}]}}. \
+For IFU documents extract: DIVIDENDS (box 2DC), INTEREST (box 2TR), SECURITY_GAINS (box 2074/3VG-3VH), FEES, FOREIGN_WITHHOLDING_TAX (box 2047). \
+For fiche de paie documents extract: NET_IMPOSABLE (net imposable cumulé, box 1AJ), CSG_DEDUCTIBLE (CSG déductible cumulée), HEURES_SUP (heures supplémentaires exonérées, box 1GH). \
 Use confidence between 0 and 1. Omit unsupported fields. Amounts must be in EUR. \
 Use sourceLocator to help the user verify where the value came from. \
 Here is local OCR/text extraction for reference:\n{local_text_preview}"

@@ -139,7 +139,8 @@ export type TaxEventType =
   | "INTEREST_RECEIVED"
   | "SECURITY_DISPOSAL"
   | "FEE_PAID"
-  | "FOREIGN_WITHHOLDING_TAX";
+  | "FOREIGN_WITHHOLDING_TAX"
+  | "SALARY_INCOME";
 
 export type TaxConfidence = "HIGH" | "MEDIUM" | "LOW" | "EXCLUDED";
 

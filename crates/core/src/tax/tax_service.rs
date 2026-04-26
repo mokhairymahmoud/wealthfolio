@@ -16,9 +16,9 @@ use crate::tax::{
     NewTaxLotAllocation, NewTaxReconciliationEntry, NewTaxYearReport, TaxCloudExtractionTrait,
     TaxConfidence, TaxDocument, TaxDocumentDownload, TaxDocumentExtractionRequest,
     TaxDocumentExtractionResult, TaxDocumentUpload, TaxEvent, TaxEventType, TaxEventUpdate,
-    TaxProfile, TaxProfileUpdate, TaxReconciliationEntry, TaxReconciliationEntryUpdate,
-    TaxReportDetail, TaxReportStatus, TaxRepositoryTrait, TaxServiceTrait, TaxYearReport,
-    DEFAULT_TAX_JURISDICTION, DEFAULT_TAX_REGIME,
+    TaxParameters, TaxProfile, TaxProfileUpdate, TaxReconciliationEntry,
+    TaxReconciliationEntryUpdate, TaxReportDetail, TaxReportStatus, TaxRepositoryTrait,
+    TaxServiceTrait, TaxYearReport, DEFAULT_TAX_JURISDICTION, DEFAULT_TAX_REGIME,
 };
 
 const TAX_REGIME_CTO: &str = "CTO";
@@ -27,6 +27,11 @@ const CATEGORY_INTEREST: &str = "INTEREST";
 const CATEGORY_SECURITY_GAINS: &str = "SECURITY_GAINS";
 const CATEGORY_FEES: &str = "FEES";
 const CATEGORY_FOREIGN_WITHHOLDING_TAX: &str = "FOREIGN_WITHHOLDING_TAX";
+const CATEGORY_SALARY_INCOME: &str = "SALARY_INCOME";
+const DOCUMENT_TYPE_FICHE_DE_PAIE: &str = "FICHE_DE_PAIE";
+/// Sentinel account_id for salary events that originate from fiche de paie documents
+/// (no investment account association).
+const SALARY_VIRTUAL_ACCOUNT_ID: &str = "__SALARY__";
 const EXTRACTION_CONFIDENCE_WARNING_THRESHOLD: f64 = 0.7;
 
 #[derive(Debug, Clone)]
@@ -67,7 +72,12 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
     }
 
     fn rule_pack_version(tax_year: i32, jurisdiction: &str) -> String {
-        format!("{jurisdiction}-{tax_year}-securities-v1")
+        let params = TaxParameters::for_year_or_latest(tax_year);
+        if params.jurisdiction.eq_ignore_ascii_case(jurisdiction) {
+            params.version
+        } else {
+            format!("{jurisdiction}-{tax_year}-securities-v1")
+        }
     }
 
     fn not_found(message: impl Into<String>) -> Error {
@@ -719,6 +729,68 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
             .collect()
     }
 
+    /// Heuristic extraction for fiche de paie (salary slip) documents.
+    ///
+    /// Direct-population mode: the document is the source of truth. Extracted
+    /// fields are presented to the user for confirmation before inclusion.
+    ///
+    /// Targets:
+    /// - `NET_IMPOSABLE`    → net imposable cumulé (box 1AJ)
+    /// - `CSG_DEDUCTIBLE`   → CSG déductible cumulée (reduces revenu imposable)
+    /// - `HEURES_SUP`       → heures supplémentaires exonérées (box 1GH)
+    fn parse_fiche_fields(text: &str) -> Vec<NewExtractedTaxField> {
+        text.lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                let lower = line.to_lowercase();
+                let (field_key, label, suggested_box) = if lower.contains("net imposable")
+                    || lower.contains("revenu imposable")
+                    || lower.contains("net fiscal")
+                    || lower.contains("cumul imposable")
+                {
+                    ("NET_IMPOSABLE", "Net imposable cumulé", Some("1AJ"))
+                } else if lower.contains("csg déductible")
+                    || lower.contains("csg deductible")
+                    || lower.contains("csg non imposable")
+                {
+                    ("CSG_DEDUCTIBLE", "CSG déductible", None)
+                } else if lower.contains("heures sup")
+                    || lower.contains("heures supplémentaires")
+                    || lower.contains("h. sup")
+                    || lower.contains("exonér")
+                    || lower.contains("exoner")
+                {
+                    (
+                        "HEURES_SUP",
+                        "Heures supplémentaires exonérées",
+                        Some("1GH"),
+                    )
+                } else {
+                    return None;
+                };
+
+                Self::parse_decimal_from_line(line).map(|amount| NewExtractedTaxField {
+                    field_key: field_key.to_string(),
+                    label: label.to_string(),
+                    mapped_category: Some(CATEGORY_SALARY_INCOME.to_string()),
+                    suggested_declaration_box: suggested_box.map(ToString::to_string),
+                    source_locator_json: Some(
+                        json!({
+                            "lineNumber": index + 1,
+                            "snippet": line.trim(),
+                        })
+                        .to_string(),
+                    ),
+                    value_text: Some(line.trim().to_string()),
+                    amount_eur: Some(amount),
+                    confidence: 0.55,
+                    status: "SUGGESTED".to_string(),
+                    confirmed_amount_eur: None,
+                })
+            })
+            .collect()
+    }
+
     fn parse_decimal_from_line(line: &str) -> Option<Decimal> {
         let normalized = line.replace(',', ".");
         normalized
@@ -787,6 +859,59 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
         }
 
         "READY_FOR_REVIEW"
+    }
+
+    /// Build salary income events from confirmed/corrected NET_IMPOSABLE fiche de paie fields.
+    ///
+    /// Only the latest cumul (highest amount) per report is used — fiche de paie amounts
+    /// are cumulative YTD, so only the December slip's total matters.
+    fn compile_salary_events(
+        report: &TaxYearReport,
+        extracted_fields: &[ExtractedTaxField],
+    ) -> Vec<CompiledTaxEvent> {
+        // Collect confirmed NET_IMPOSABLE amounts from fiche de paie extractions.
+        let mut net_imposable_amounts: Vec<Decimal> = extracted_fields
+            .iter()
+            .filter(|field| {
+                matches!(field.status.as_str(), "CONFIRMED" | "CORRECTED")
+                    && field.field_key == "NET_IMPOSABLE"
+                    && field.mapped_category.as_deref() == Some(CATEGORY_SALARY_INCOME)
+            })
+            .filter_map(|field| field.confirmed_amount_eur.or(field.amount_eur))
+            .collect();
+
+        if net_imposable_amounts.is_empty() {
+            return Vec::new();
+        }
+
+        // Use the largest value — latest cumul annuel.
+        net_imposable_amounts.sort();
+        let amount = *net_imposable_amounts.last().unwrap();
+
+        vec![CompiledTaxEvent {
+            event: NewTaxEvent {
+                event_type: TaxEventType::SalaryIncome,
+                category: CATEGORY_SALARY_INCOME.to_string(),
+                suggested_box: Some("1AJ".to_string()),
+                account_id: SALARY_VIRTUAL_ACCOUNT_ID.to_string(),
+                asset_id: None,
+                activity_id: None,
+                event_date: format!("{}-12-31", report.tax_year),
+                amount_currency: report.base_currency.clone(),
+                amount_local: Some(amount),
+                amount_eur: Some(amount),
+                taxable_amount_eur: Some(amount),
+                expenses_eur: None,
+                confidence: TaxConfidence::High,
+                included: true,
+                notes: Some(format!(
+                    "Net imposable cumulé from fiche de paie ({})",
+                    report.rule_pack_version
+                )),
+            },
+            sources: Vec::new(),
+            lot_allocations: Vec::new(),
+        }]
     }
 }
 
@@ -889,8 +1014,10 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
             ));
         }
 
-        let compiled = self.compile_tax_events(&report)?;
+        let mut compiled = self.compile_tax_events(&report)?;
         let extracted_fields = self.extracted_fields_for_report(id)?;
+        let salary_events = Self::compile_salary_events(&report, &extracted_fields);
+        compiled.events.extend(salary_events);
         let reconciliation = self.build_reconciliation(id, &compiled.events, &extracted_fields);
         let summary_json = json!({
             "eventCount": compiled.events.len(),
@@ -1031,6 +1158,8 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
             extractor
                 .extract_tax_fields(&document, &content, &preview)
                 .await?
+        } else if document.document_type == DOCUMENT_TYPE_FICHE_DE_PAIE {
+            Self::parse_fiche_fields(&preview)
         } else {
             Self::parse_ifu_fields(&preview)
         };
@@ -1258,6 +1387,14 @@ mod tests {
         }
 
         async fn delete_activity(&self, _activity_id: String) -> Result<Activity> {
+            unimplemented!()
+        }
+
+        async fn link_transfer_activities(
+            &self,
+            _activity_a_id: String,
+            _activity_b_id: String,
+        ) -> Result<(Activity, Activity)> {
             unimplemented!()
         }
 
@@ -2334,5 +2471,106 @@ mod tests {
         use crate::tax::compute_nombre_parts;
         // divorcé(1) + 2 children(1.0) = 2.0
         assert_eq!(compute_nombre_parts("DIVORCE", 2, 0, false, false), 2.0);
+    }
+
+    #[test]
+    fn parse_fiche_fields_detects_net_imposable() {
+        let fields =
+            TaxService::<MockTaxRepository>::parse_fiche_fields("Net imposable cumulé 35000,00");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].field_key, "NET_IMPOSABLE");
+        assert_eq!(fields[0].suggested_declaration_box.as_deref(), Some("1AJ"));
+        assert_eq!(
+            fields[0].mapped_category.as_deref(),
+            Some(CATEGORY_SALARY_INCOME)
+        );
+        assert_eq!(
+            fields[0].amount_eur,
+            Some("35000.00".parse::<Decimal>().unwrap())
+        );
+    }
+
+    #[test]
+    fn parse_fiche_fields_detects_csg_deductible() {
+        let fields = TaxService::<MockTaxRepository>::parse_fiche_fields("CSG déductible 2380.00");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].field_key, "CSG_DEDUCTIBLE");
+        assert!(fields[0].suggested_declaration_box.is_none());
+    }
+
+    #[test]
+    fn parse_fiche_fields_detects_heures_sup() {
+        let fields =
+            TaxService::<MockTaxRepository>::parse_fiche_fields("Heures supplémentaires 1200.00");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].field_key, "HEURES_SUP");
+        assert_eq!(fields[0].suggested_declaration_box.as_deref(), Some("1GH"));
+    }
+
+    #[test]
+    fn parse_fiche_fields_no_match_returns_empty() {
+        let fields = TaxService::<MockTaxRepository>::parse_fiche_fields(
+            "Salaire brut 5000.00\nCotisations 1000.00",
+        );
+        assert!(fields.is_empty());
+    }
+
+    #[test]
+    fn compile_salary_events_uses_highest_net_imposable() {
+        let report = make_report("r1", TaxReportStatus::Draft);
+        // Simulate three confirmed NET_IMPOSABLE fields (Jan, Jun, Dec cumuls)
+        let fields: Vec<ExtractedTaxField> = vec![
+            make_confirmed_field("NET_IMPOSABLE", Decimal::from(10000u32)),
+            make_confirmed_field("NET_IMPOSABLE", Decimal::from(20000u32)),
+            make_confirmed_field("NET_IMPOSABLE", Decimal::from(35000u32)),
+        ];
+
+        let events = TaxService::<MockTaxRepository>::compile_salary_events(&report, &fields);
+
+        assert_eq!(events.len(), 1);
+        let event = &events[0].event;
+        assert_eq!(event.event_type, TaxEventType::SalaryIncome);
+        assert_eq!(event.taxable_amount_eur, Some(Decimal::from(35000u32)));
+        assert_eq!(event.suggested_box.as_deref(), Some("1AJ"));
+        assert_eq!(event.account_id, SALARY_VIRTUAL_ACCOUNT_ID);
+    }
+
+    #[test]
+    fn compile_salary_events_empty_when_no_confirmed_fields() {
+        let report = make_report("r1", TaxReportStatus::Draft);
+        let fields: Vec<ExtractedTaxField> = vec![make_suggested_field(
+            "NET_IMPOSABLE",
+            Decimal::from(35000u32),
+        )];
+
+        let events = TaxService::<MockTaxRepository>::compile_salary_events(&report, &fields);
+        assert!(events.is_empty());
+    }
+
+    fn make_confirmed_field(key: &str, amount: Decimal) -> ExtractedTaxField {
+        use chrono::NaiveDateTime;
+        ExtractedTaxField {
+            id: uuid::Uuid::new_v4().to_string(),
+            extraction_id: "extraction-1".to_string(),
+            field_key: key.to_string(),
+            label: key.to_string(),
+            mapped_category: Some(CATEGORY_SALARY_INCOME.to_string()),
+            suggested_declaration_box: None,
+            source_locator_json: None,
+            value_text: None,
+            amount_eur: Some(amount),
+            confidence: 0.9,
+            status: "CONFIRMED".to_string(),
+            confirmed_amount_eur: None,
+            created_at: NaiveDateTime::default(),
+            updated_at: NaiveDateTime::default(),
+        }
+    }
+
+    fn make_suggested_field(key: &str, amount: Decimal) -> ExtractedTaxField {
+        ExtractedTaxField {
+            status: "SUGGESTED".to_string(),
+            ..make_confirmed_field(key, amount)
+        }
     }
 }

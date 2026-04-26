@@ -162,6 +162,7 @@ pub enum TaxEventType {
     SecurityDisposal,
     FeePaid,
     ForeignWithholdingTax,
+    SalaryIncome,
 }
 
 impl TaxEventType {
@@ -172,6 +173,7 @@ impl TaxEventType {
             TaxEventType::SecurityDisposal => "SECURITY_DISPOSAL",
             TaxEventType::FeePaid => "FEE_PAID",
             TaxEventType::ForeignWithholdingTax => "FOREIGN_WITHHOLDING_TAX",
+            TaxEventType::SalaryIncome => "SALARY_INCOME",
         }
     }
 }
@@ -186,6 +188,7 @@ impl TryFrom<&str> for TaxEventType {
             "SECURITY_DISPOSAL" => Ok(TaxEventType::SecurityDisposal),
             "FEE_PAID" => Ok(TaxEventType::FeePaid),
             "FOREIGN_WITHHOLDING_TAX" => Ok(TaxEventType::ForeignWithholdingTax),
+            "SALARY_INCOME" => Ok(TaxEventType::SalaryIncome),
             _ => Err(format!("Unsupported tax event type: {value}")),
         }
     }
