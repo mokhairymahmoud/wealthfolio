@@ -1005,6 +1005,17 @@ export default function TaxesPage() {
   const latestExtractionPreview = previewDocumentId
     ? (latestExtractionByDocument.get(previewDocumentId)?.extraction.rawTextPreview ?? null)
     : null;
+  // Parse the structured declaration summary stored in summaryJson.
+  const declarationSummary = useMemo<DeclarationSummary | null>(() => {
+    if (!selectedReport?.summaryJson) return null;
+    try {
+      const parsed = JSON.parse(selectedReport.summaryJson) as DeclarationSummary;
+      return Array.isArray(parsed?.boxes) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [selectedReport?.summaryJson]);
+
   const summary = useMemo(() => {
     const events = reportDetail?.events ?? [];
     const includedEvents = events.filter((event) => event.included);
@@ -1015,16 +1026,30 @@ export default function TaxesPage() {
         return Number.isFinite(value) ? sum + value : sum;
       }, 0);
 
+    // Prefer declaration summary boxes when available (post-generate).
+    const box1AJ = declarationSummary?.boxes.find((b) => b.boxRef === "1AJ");
+    const salaryNetImposable = box1AJ?.amountEur ?? sumCategory(["SALARY_INCOME"]);
+
+    const salaryGross = includedEvents
+      .filter((e) => e.category === "SALARY_INCOME")
+      .reduce((sum, e) => sum + (e.amountEur != null ? Number(e.amountEur) : 0), 0);
+
+    const fraisReelsIncluded = Math.abs(sumCategory(["FRAIS_REELS_CANDIDATE"]));
+    const usingFraisReels = declarationSummary?.fraisMethod === "FRAIS_REELS";
+
     return {
-      salaryIncome: sumCategory(["SALARY_INCOME"]),
-      taxableIncome: sumCategory(["DIVIDENDS", "INTEREST"]),
-      realizedGains: sumCategory(["SECURITY_GAINS"]),
-      withholdingTax: sumCategory(["FOREIGN_WITHHOLDING_TAX"]),
+      salaryGross,
+      salaryNetImposable,
+      forfaitaireAbattement: usingFraisReels
+        ? fraisReelsIncluded
+        : Math.abs(sumCategory(["FRAIS_FORFAITAIRE_DEDUCTION"])),
+      usingFraisReels,
+      csgDeductible: Math.abs(sumCategory(["CSG_DEDUCTIBLE_DEDUCTION"])),
       needsReviewCount:
         (reportDetail?.issues?.length ?? 0) +
         extractedFields.filter((field) => field.status === "SUGGESTED").length,
     };
-  }, [extractedFields, reportDetail]);
+  }, [extractedFields, reportDetail, declarationSummary]);
   const extractionActionsDisabled =
     isReportLocked ||
     confirmFieldMutation.isPending ||
@@ -1253,40 +1278,38 @@ export default function TaxesPage() {
             <CardTitle className="text-sm font-medium">Salary Income</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold">{formatAmount(summary.salaryIncome)}</div>
+            <div className="text-2xl font-semibold">{formatAmount(summary.salaryGross)}</div>
+            <p className="text-muted-foreground text-xs">Net imposable from fiche de paie</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">
+              {summary.usingFraisReels ? "Frais réels" : "Abattement 10%"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold">
+              {summary.forfaitaireAbattement > 0
+                ? `- ${formatAmount(summary.forfaitaireAbattement)}`
+                : "-"}
+            </div>
             <p className="text-muted-foreground text-xs">
-              Net imposable from fiche de paie (box 1AJ)
+              {summary.usingFraisReels ? "Frais réels (box 1AK)" : "Forfaitaire (box 1AK)"}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Taxable Income</CardTitle>
+            <CardTitle className="text-sm font-medium">Net imposable (1AJ)</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold">{formatAmount(summary.taxableIncome)}</div>
+            <div className="text-2xl font-semibold">{formatAmount(summary.salaryNetImposable)}</div>
             <p className="text-muted-foreground text-xs">
-              Dividends and interest currently included
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Realized Gains/Losses</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold">{formatAmount(summary.realizedGains)}</div>
-            <p className="text-muted-foreground text-xs">Included disposal events in EUR</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Withholding Tax</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold">{formatAmount(summary.withholdingTax)}</div>
-            <p className="text-muted-foreground text-xs">
-              Reserved for supported withholding events
+              After {summary.usingFraisReels ? "frais réels" : "abattement"}
+              {summary.csgDeductible > 0
+                ? ` · CSG déduc. ${formatAmount(summary.csgDeductible)}`
+                : ""}
             </p>
           </CardContent>
         </Card>
@@ -1387,67 +1410,75 @@ export default function TaxesPage() {
         </CardContent>
       </Card>
 
-      {selectedReport &&
-        (() => {
-          let declarationSummary: DeclarationSummary | null = null;
-          try {
-            declarationSummary = JSON.parse(selectedReport.summaryJson) as DeclarationSummary;
-            if (!Array.isArray(declarationSummary?.boxes)) declarationSummary = null;
-          } catch {
-            declarationSummary = null;
-          }
-          return declarationSummary && declarationSummary.boxes.length > 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between gap-2">
-                  <span>Declaration — Formulaire 2042</span>
-                  <Badge variant="outline">
-                    {declarationSummary.fraisMethod === "FRAIS_REELS"
-                      ? "Frais réels"
-                      : "Forfaitaire 10%"}
-                  </Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-20">Box</TableHead>
-                      <TableHead>Label</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                      <TableHead className="w-32 text-right">Copy</TableHead>
+      {selectedReport && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between gap-2">
+              <span>Declaration — Formulaire 2042</span>
+              {declarationSummary && (
+                <Badge
+                  variant={declarationSummary.fraisMethod === "FRAIS_REELS" ? "default" : "outline"}
+                >
+                  {declarationSummary.fraisMethod === "FRAIS_REELS"
+                    ? "Frais réels"
+                    : "Forfaitaire 10%"}
+                </Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {declarationSummary && declarationSummary.boxes.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-20">Box</TableHead>
+                    <TableHead>Label</TableHead>
+                    <TableHead className="text-right">Amount (€)</TableHead>
+                    <TableHead className="w-32 text-right">Copy</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {declarationSummary.boxes.map((box) => (
+                    <TableRow key={box.boxRef}>
+                      <TableCell className="font-mono text-base font-semibold">
+                        {box.boxRef}
+                      </TableCell>
+                      <TableCell>
+                        <div>{box.label}</div>
+                        <div className="text-muted-foreground text-xs">{box.source}</div>
+                      </TableCell>
+                      <TableCell className="text-right font-medium">
+                        {formatAmount(box.amountEur)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            if (box.amountEur != null) {
+                              // impots.gouv accepts whole euros only.
+                              void navigator.clipboard.writeText(String(Math.round(box.amountEur)));
+                            }
+                          }}
+                          disabled={box.amountEur == null}
+                        >
+                          <Icons.Copy className="mr-1 h-3 w-3" />
+                          Copy
+                        </Button>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {declarationSummary.boxes.map((box) => (
-                      <TableRow key={box.boxRef}>
-                        <TableCell className="font-mono font-semibold">{box.boxRef}</TableCell>
-                        <TableCell>{box.label}</TableCell>
-                        <TableCell className="text-right font-medium">
-                          {formatAmount(box.amountEur)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              if (box.amountEur != null) {
-                                void navigator.clipboard.writeText(String(box.amountEur));
-                              }
-                            }}
-                            disabled={box.amountEur == null}
-                          >
-                            Copy
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          ) : null;
-        })()}
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="text-muted-foreground py-4 text-center text-sm">
+                Click <span className="font-medium">Generate</span> to compute your declaration
+                boxes.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {selectedReport && (
         <div className="grid gap-4 md:grid-cols-3">
@@ -1615,10 +1646,13 @@ export default function TaxesPage() {
 
       {selectedReport &&
         (() => {
+          // Only show this card once the report has been generated at least once.
+          const hasGenerated = !!selectedReport.generatedAt;
+          if (!hasGenerated) return null;
+
           const fraisCandidates = (reportDetail?.events ?? []).filter(
             (e) => e.category === "FRAIS_REELS_CANDIDATE",
           );
-          if (fraisCandidates.length === 0) return null;
 
           const includedTotal = fraisCandidates
             .filter((e) => e.included)
@@ -1632,55 +1666,66 @@ export default function TaxesPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between gap-2">
-                  <span>Frais Réels Candidates</span>
-                  <div className="flex items-center gap-2 text-sm font-normal">
-                    <span className="text-muted-foreground">Included total:</span>
-                    <span className="font-medium">{formatAmount(includedTotal)}</span>
-                  </div>
+                  <span>Frais Réels</span>
+                  {fraisCandidates.length > 0 && (
+                    <div className="flex items-center gap-2 text-sm font-normal">
+                      <span className="text-muted-foreground">Included total:</span>
+                      <span className="font-medium">{formatAmount(includedTotal)}</span>
+                      {summary.usingFraisReels && <Badge>Active — box 1AK</Badge>}
+                    </div>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10">Incl.</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Description</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {fraisCandidates.map((event) => (
-                      <TableRow key={event.id}>
-                        <TableCell>
-                          <Checkbox
-                            checked={event.included}
-                            disabled={isReportLocked || updateTaxEventMutation.isPending}
-                            onCheckedChange={(checked) =>
-                              updateTaxEventMutation.mutate({
-                                id: event.id,
-                                included: checked === true,
-                                taxableAmountEur: event.taxableAmountEur as number | null,
-                                notes: event.notes ?? null,
-                              })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell className="text-sm">{event.eventDate}</TableCell>
-                        <TableCell className="text-sm">
-                          {event.notes?.replace("Frais réels candidate ", "") ?? "-"}
-                        </TableCell>
-                        <TableCell className="text-right text-sm">
-                          {formatAmount(
-                            event.taxableAmountEur != null
-                              ? Math.abs(Number(event.taxableAmountEur))
-                              : null,
-                          )}
-                        </TableCell>
+                {fraisCandidates.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-10">Incl.</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Description</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {fraisCandidates.map((event) => (
+                        <TableRow key={event.id}>
+                          <TableCell>
+                            <Checkbox
+                              checked={event.included}
+                              disabled={isReportLocked || updateTaxEventMutation.isPending}
+                              onCheckedChange={(checked) =>
+                                updateTaxEventMutation.mutate({
+                                  id: event.id,
+                                  included: checked === true,
+                                  taxableAmountEur: event.taxableAmountEur as number | null,
+                                  notes: event.notes ?? null,
+                                })
+                              }
+                            />
+                          </TableCell>
+                          <TableCell className="text-sm">{event.eventDate}</TableCell>
+                          <TableCell className="text-sm">
+                            {event.notes?.replace("Frais réels candidate ", "") ?? "-"}
+                          </TableCell>
+                          <TableCell className="text-right text-sm">
+                            {formatAmount(
+                              event.taxableAmountEur != null
+                                ? Math.abs(Number(event.taxableAmountEur))
+                                : null,
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="text-muted-foreground py-4 text-center text-sm">
+                    No professional expense candidates detected. Connect a bank account so
+                    Wealthfolio can scan your transactions for frais réels candidates (transport,
+                    meals, equipment, telecom).
+                  </p>
+                )}
               </CardContent>
             </Card>
           );
