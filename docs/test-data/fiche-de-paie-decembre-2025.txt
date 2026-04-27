@@ -1,0 +1,59 @@
+ACME FRANCE SAS
+Siège social : 12 rue de la Paix, 75001 Paris
+SIRET : 123 456 789 00012
+APE : 6201Z - Programmation informatique
+
+BULLETIN DE PAIE - DECEMBRE 2025
+=================================
+Employé    : Mohamed Khairy
+Matricule  : 00147
+Emploi     : Ingénieur logiciel - Cadre
+Convention : Syntec
+Période    : 01/12/2025 au 31/12/2025
+
+-----------------------------------------------------------
+SALAIRE DE BASE                        Taux     Montant
+-----------------------------------------------------------
+Salaire mensuel brut                            4 200,00
+Prime de fin d'année                              500,00
+-----------------------------------------------------------
+BRUT MENSUEL                                    4 700,00
+-----------------------------------------------------------
+
+-----------------------------------------------------------
+COTISATIONS SALARIALES                 Base      Montant
+-----------------------------------------------------------
+Sécurité sociale - maladie            4700,00      28,20
+Sécurité sociale - vieillesse         4700,00     329,00
+Complémentaire retraite Tranche 1     4700,00     117,50
+Complémentaire retraite Tranche 2     4700,00      47,00
+Prévoyance cadre                      4700,00      94,00
+CSG déductible                        4582,50     311,61
+CSG non déductible                    4582,50     137,48
+CRDS                                  4582,50      27,50
+Chômage                               4700,00     125,82
+-----------------------------------------------------------
+
+-----------------------------------------------------------
+CUMULS ANNUELS 2025
+-----------------------------------------------------------
+Brut imposable cumul annuel                    52 200,00
+Net imposable                                  43 800,00
+CSG déductible                                  3 347,22
+CSG non déductible                              1 474,96
+Prélèvement à la source                         4 100,00
+-----------------------------------------------------------
+
+NET A PAYER CE MOIS                             3 482,89
+
+-----------------------------------------------------------
+INFORMATIONS COMPLEMENTAIRES
+-----------------------------------------------------------
+Taux personnalisé PAS appliqué : 9,20 %
+Solde congés payés : 12 jours
+Date de paiement : 28/12/2025
+Mode de règlement : Virement bancaire
+IBAN : FR76 1234 5678 9012 3456 7890 123
+-----------------------------------------------------------
+
+Ce bulletin de salaire doit être conservé sans limitation de durée.

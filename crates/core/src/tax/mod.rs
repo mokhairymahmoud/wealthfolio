@@ -8,4 +8,7 @@ mod tax_traits;
 pub use tax_model::*;
 pub use tax_params::TaxParameters;
 pub use tax_service::TaxService;
-pub use tax_traits::{TaxCloudExtractionTrait, TaxRepositoryTrait, TaxServiceTrait};
+pub use tax_traits::{
+    ActivitySummary, FraisReelsClassification, TaxCloudExtractionTrait, TaxRepositoryTrait,
+    TaxServiceTrait,
+};

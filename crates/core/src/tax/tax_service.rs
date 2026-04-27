@@ -8,11 +8,11 @@ use std::sync::Arc;
 use crate::accounts::{account_types, AccountServiceTrait};
 use crate::activities::{
     Activity, ActivityServiceTrait, ACTIVITY_TYPE_BUY, ACTIVITY_TYPE_DIVIDEND, ACTIVITY_TYPE_FEE,
-    ACTIVITY_TYPE_INTEREST, ACTIVITY_TYPE_SELL, ACTIVITY_TYPE_TAX,
+    ACTIVITY_TYPE_INTEREST, ACTIVITY_TYPE_SELL, ACTIVITY_TYPE_TAX, ACTIVITY_TYPE_WITHDRAWAL,
 };
 use crate::errors::{Error, Result, ValidationError};
 use crate::tax::{
-    AccountTaxProfile, AccountTaxProfileUpdate, CompiledTaxEvent, DeclarationBox,
+    AccountTaxProfile, AccountTaxProfileUpdate, ActivitySummary, CompiledTaxEvent, DeclarationBox,
     DeclarationSummary, ExtractedTaxField, ExtractedTaxFieldUpdate, NewExtractedTaxField,
     NewTaxEvent, NewTaxEventSource, NewTaxIssue, NewTaxLotAllocation, NewTaxReconciliationEntry,
     NewTaxYearReport, TaxCloudExtractionTrait, TaxConfidence, TaxDocument, TaxDocumentDownload,
@@ -231,16 +231,16 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
         let mut output = CompileOutput::default();
 
         if cto_account_ids.is_empty() {
+            // CDI-only users have no CTO — informational only, don't block salary compilation.
             output.issues.push(NewTaxIssue {
-                severity: "WARNING".to_string(),
+                severity: "INFO".to_string(),
                 code: "NO_CTO_ACCOUNTS".to_string(),
-                message: "No securities account is marked as CTO for this French tax report."
+                message: "No securities account is marked as CTO for this French tax report. If you only have salary income, you can ignore this."
                     .to_string(),
                 document_id: None,
                 account_id: None,
                 activity_id: None,
             });
-            return Ok(output);
         }
 
         let mut activities = self.activity_service.get_activities()?;
@@ -753,27 +753,35 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
     /// - `NET_IMPOSABLE`    → net imposable cumulé (box 1AJ)
     /// - `CSG_DEDUCTIBLE`   → CSG déductible cumulée (reduces revenu imposable)
     /// - `HEURES_SUP`       → heures supplémentaires exonérées (box 1GH)
+    ///
+    /// When a CUMULS ANNUELS section is found, parsing starts there so monthly
+    /// cotisation lines (which have base + rate + amount columns) are skipped.
+    /// This avoids CSG duplicate entries and wrong amounts from space-split
+    /// French thousands in the monthly section.
     fn parse_fiche_fields(text: &str) -> Vec<NewExtractedTaxField> {
+        // Skip to CUMULS ANNUELS section when present to avoid monthly duplicates.
+        let cumuls_start = text.lines().position(|l| {
+            let n = l.to_lowercase();
+            n.contains("cumuls") && (n.contains("annuel") || n.contains("annuels"))
+        });
+        let in_cumuls = cumuls_start.is_some();
+        let skip = cumuls_start.map(|s| s + 1).unwrap_or(0);
+
         text.lines()
             .enumerate()
-            .filter_map(|(index, line)| {
-                // Normalize OCR double-spaces so keyword matching works regardless of spacing
+            .skip(skip)
+            .filter_map(move |(index, line)| {
                 let lower = line.to_lowercase();
                 let normalized = lower.split_whitespace().collect::<Vec<_>>().join(" ");
                 let lower = normalized.as_str();
+
                 let (field_key, label, suggested_box) = if lower.contains("net imposable")
                     || lower.contains("revenu imposable")
                     || lower.contains("net fiscal")
                     || lower.contains("cumul imposable")
-                    // Public-sector / hospital payslips
                     || lower.contains("montant net social")
                     || lower.contains("net a payer avant")
-                    || lower.contains("totalisation brut")
-                    || lower.contains("total brut")
-                    || lower.contains("brut imposable")
-                    // OCR common typos
                     || lower.contains("net impogable")
-                    || lower.contains("brut impogable")
                 {
                     ("NET_IMPOSABLE", "Net imposable cumulé", Some("1AJ"))
                 } else if lower.contains("csg déductible")
@@ -783,9 +791,7 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     ("CSG_DEDUCTIBLE", "CSG déductible", None)
                 } else if lower.contains("csg non déductible")
                     || lower.contains("csg non deductible")
-                    || lower.contains("crds")
                 {
-                    // CSG non déductible is also useful context but mapped to same category
                     ("CSG_NON_DEDUCTIBLE", "CSG non déductible", None)
                 } else if lower.contains("heures sup")
                     || lower.contains("heures supplémentaires")
@@ -800,9 +806,10 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     )
                 } else if (lower.contains("prelevement a la source")
                     || lower.contains("prélèvement à la source")
-                    || lower.contains("p.a.s")
-                    || lower.contains("tx per")
-                    || lower.contains("taux personnalisé"))
+                    || lower.contains("p.a.s"))
+                    // Exclude rate-only lines ("Taux personnalisé PAS appliqué : 9,20 %")
+                    && !lower.contains('%')
+                    && !lower.contains("taux")
                     && !lower.contains("net a payer")
                     && !lower.contains("net à payer")
                 {
@@ -811,9 +818,11 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                     return None;
                 };
 
-                // For NET_IMPOSABLE lines, take the largest number (annual cumul column).
-                // For other fields, take the last number (closest to the label).
-                let amount = if field_key == "NET_IMPOSABLE" {
+                // In the cumuls section values are single amounts with French thousands
+                // separators (e.g. "3 347,22"). parse_largest_decimal_from_line merges
+                // space-split tokens so "3 347,22" → 3347.22.
+                // Fallback (no cumuls section): still use largest for NET_IMPOSABLE.
+                let amount = if in_cumuls || field_key == "NET_IMPOSABLE" {
                     Self::parse_largest_decimal_from_line(line)
                 } else {
                     Self::parse_decimal_from_line(line)
@@ -999,10 +1008,18 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
 
     /// Scan CASH account bank transactions for professional expense candidates (Phase C).
     ///
-    /// Returns LOW-confidence, excluded FeePaid events for each transaction whose notes
-    /// match a known professional expense keyword. User reviews and includes/excludes
-    /// each candidate via the event ledger.
-    fn compile_frais_reels_candidates(&self, report: &TaxYearReport) -> Vec<CompiledTaxEvent> {
+    /// Sends all WITHDRAWAL transactions for the tax year to the LLM, which identifies
+    /// those likely to qualify as frais réels (transport, meals, equipment, telecom).
+    /// Returns LOW-confidence, user-excluded events — the user reviews and includes each.
+    /// Falls back to an empty list when no cloud extractor is configured.
+    async fn compile_frais_reels_candidates(
+        &self,
+        report: &TaxYearReport,
+    ) -> Vec<CompiledTaxEvent> {
+        let extractor = match &self.cloud_extractor {
+            Some(e) => e,
+            None => return Vec::new(),
+        };
         let account_service = match &self.account_service {
             Some(svc) => svc,
             None => return Vec::new(),
@@ -1023,115 +1040,80 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
             return Vec::new();
         }
 
-        // Load activities for the tax year across all CASH accounts.
         let year_start = chrono::NaiveDate::from_ymd_opt(report.tax_year, 1, 1);
         let year_end = chrono::NaiveDate::from_ymd_opt(report.tax_year, 12, 31);
-        let search = self.activity_service.search_activities(
-            1,
+        let activities = match self.activity_service.search_activities(
+            0,
             10_000,
             Some(cash_account_ids),
-            None,
+            Some(vec![ACTIVITY_TYPE_WITHDRAWAL.to_string()]),
             None,
             None,
             None,
             year_start,
             year_end,
             None,
-        );
-
-        let activities = match search {
+        ) {
             Ok(resp) => resp.data,
             Err(_) => return Vec::new(),
         };
 
-        // Keyword categories for professional expense detection.
-        // Each tuple is (keyword_slice, category_hint).
-        let keyword_map: &[(&[&str], &str)] = &[
-            (
-                &[
-                    "ratp",
-                    "navigo",
-                    "sncf",
-                    "transilien",
-                    "ter ",
-                    "metro",
-                    "bus ticket",
-                    "velib",
-                ],
-                "TRANSPORT",
-            ),
-            (
-                &["restau", "dejeuner", "repas", "lunch", "cantine"],
-                "REPAS",
-            ),
-            (
-                &[
-                    "fnac",
-                    "darty",
-                    "ldlc",
-                    "matériel",
-                    "matirel",
-                    "imprimante",
-                    "clavier",
-                    "ecran",
-                ],
-                "MATERIEL",
-            ),
-            (
-                &["orange", "sfr", "bouygues", "free mobile", "forfait tel"],
-                "TELECOM",
-            ),
-        ];
+        if activities.is_empty() {
+            return Vec::new();
+        }
 
-        let mut candidates = Vec::new();
+        // Build compact summaries for the LLM — only what it needs.
+        let amount_by_id: std::collections::HashMap<String, Decimal> = activities
+            .iter()
+            .filter_map(|a| {
+                let amount: Decimal = a.amount.as_deref()?.parse().ok()?;
+                Some((a.id.clone(), amount.abs()))
+            })
+            .collect();
 
-        for activity in &activities {
-            // amount and fx_rate are Option<String> in ActivityDetails — parse them.
-            let amount_str = match &activity.amount {
-                Some(s) => s,
-                None => continue,
-            };
-            let amount_parsed: Decimal = match amount_str.parse() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            // Only consider outgoing (negative) transactions.
-            let amount = if amount_parsed < Decimal::ZERO {
-                amount_parsed.abs()
-            } else {
-                continue;
-            };
+        let summaries: Vec<ActivitySummary> = activities
+            .iter()
+            .filter(|a| amount_by_id.contains_key(&a.id))
+            .map(|a| ActivitySummary {
+                id: a.id.clone(),
+                date: a.date.get(..10).unwrap_or(&a.date).to_string(),
+                amount: *amount_by_id.get(&a.id).unwrap(),
+                currency: a.currency.clone(),
+                notes: a.comment.clone().unwrap_or_default(),
+            })
+            .collect();
 
-            let notes_lower = activity.comment.as_deref().unwrap_or("").to_lowercase();
-            if notes_lower.is_empty() {
-                continue;
-            }
+        let classifications = match extractor.classify_frais_reels(&summaries).await {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
 
-            let matched_category = keyword_map.iter().find_map(|(keywords, category)| {
-                if keywords.iter().any(|kw| notes_lower.contains(kw)) {
-                    Some(*category)
-                } else {
-                    None
-                }
-            });
+        // Index activities by id for fast lookup.
+        let activity_by_id: std::collections::HashMap<&str, _> =
+            activities.iter().map(|a| (a.id.as_str(), a)).collect();
 
-            if let Some(category_hint) = matched_category {
+        classifications
+            .into_iter()
+            .filter_map(|cls| {
+                let activity = activity_by_id.get(cls.id.as_str())?;
+                let amount = *amount_by_id.get(&cls.id)?;
                 let fx_rate: Option<Decimal> = activity
                     .fx_rate
                     .as_deref()
                     .and_then(|s| s.parse().ok())
                     .filter(|&fx: &Decimal| fx != Decimal::ZERO);
-
                 let amount_eur = fx_rate.map(|fx| amount / fx).unwrap_or(amount);
-
-                // Use the date string as-is (already YYYY-MM-DD or RFC3339).
                 let event_date = activity
                     .date
                     .get(..10)
                     .unwrap_or(&activity.date)
                     .to_string();
-
-                candidates.push(CompiledTaxEvent {
+                let confidence = match cls.confidence {
+                    c if c >= 0.8 => TaxConfidence::High,
+                    c if c >= 0.5 => TaxConfidence::Medium,
+                    _ => TaxConfidence::Low,
+                };
+                Some(CompiledTaxEvent {
                     event: NewTaxEvent {
                         event_type: TaxEventType::FeePaid,
                         category: CATEGORY_FRAIS_REELS_CANDIDATE.to_string(),
@@ -1145,20 +1127,19 @@ impl<T: TaxRepositoryTrait> TaxService<T> {
                         amount_eur: Some(-amount_eur),
                         taxable_amount_eur: Some(-amount_eur),
                         expenses_eur: None,
-                        confidence: TaxConfidence::Low,
+                        confidence,
                         included: false,
                         notes: Some(format!(
-                            "Frais réels candidate ({category_hint}): {}",
+                            "Frais réels candidate ({}): {}",
+                            cls.category,
                             activity.comment.as_deref().unwrap_or("")
                         )),
                     },
                     sources: Vec::new(),
                     lot_allocations: Vec::new(),
-                });
-            }
-        }
-
-        candidates
+                })
+            })
+            .collect()
     }
 
     /// Build a structured declaration summary from compiled events and extracted fields.
@@ -1372,8 +1353,8 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         // Phase A: CSG déductible deduction from confirmed fiche de paie fields.
         let csg_events = Self::compile_csg_deduction(&extracted_fields, &report);
         compiled.events.extend(csg_events);
-        // Phase C: frais réels candidates from CASH account bank transactions.
-        let frais_candidates = self.compile_frais_reels_candidates(&report);
+        // Phase C: frais réels candidates classified by LLM.
+        let frais_candidates = self.compile_frais_reels_candidates(&report).await;
         compiled.events.extend(frais_candidates);
         let reconciliation = self.build_reconciliation(id, &compiled.events, &extracted_fields);
         let declaration_summary =
@@ -1494,11 +1475,6 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
         request: TaxDocumentExtractionRequest,
     ) -> Result<TaxDocumentExtractionResult> {
         let normalized_method = Self::normalize_extraction_method(&request.method)?;
-        if normalized_method == "CLOUD_AI" && !request.consent_granted {
-            return Err(Error::Validation(ValidationError::InvalidInput(
-                "Cloud AI extraction requires explicit consent.".to_string(),
-            )));
-        }
         let document = self
             .repository
             .get_tax_document(&request.document_id)?
@@ -1518,15 +1494,23 @@ impl<T: TaxRepositoryTrait + Send + Sync> TaxServiceTrait for TaxService<T> {
             &document.filename,
         )?;
         let preview: String = text.chars().take(4000).collect();
-        let fields = if normalized_method == "CLOUD_AI" {
-            let extractor = self.cloud_extractor.as_ref().ok_or_else(|| {
-                Self::invalid_input(
-                    "Cloud AI extraction is unavailable in this runtime or has not been configured",
-                )
-            })?;
+        // All document types now use the cloud extractor when available.
+        // LOCAL_TEXT falls back to the LLM too — heuristic parsing is removed.
+        // IFU documents have no LLM path yet (Phase 8) so they still use the local parser
+        // when the extractor is absent.
+        let fields = if let Some(extractor) = &self.cloud_extractor {
+            if normalized_method == "CLOUD_AI" && !request.consent_granted {
+                return Err(Error::Validation(ValidationError::InvalidInput(
+                    "Cloud AI extraction requires explicit consent.".to_string(),
+                )));
+            }
             extractor
                 .extract_tax_fields(&document, &content, &preview)
                 .await?
+        } else if normalized_method == "CLOUD_AI" {
+            return Err(Self::invalid_input(
+                "Cloud AI extraction is unavailable in this runtime or has not been configured",
+            ));
         } else if document.document_type == DOCUMENT_TYPE_FICHE_DE_PAIE {
             Self::parse_fiche_fields(&preview)
         } else {
@@ -1912,6 +1896,13 @@ mod tests {
         ) -> Result<Vec<NewExtractedTaxField>> {
             self.called.store(true, Ordering::Relaxed);
             Ok(self.fields.clone())
+        }
+
+        async fn classify_frais_reels(
+            &self,
+            _activities: &[crate::tax::ActivitySummary],
+        ) -> Result<Vec<crate::tax::FraisReelsClassification>> {
+            Ok(Vec::new())
         }
     }
 
@@ -2882,6 +2873,91 @@ mod tests {
             "Salaire brut 5000.00\nCotisations 1000.00",
         );
         assert!(fields.is_empty());
+    }
+
+    #[test]
+    fn parse_fiche_fields_cumuls_section_deduplicates_and_parses_french_thousands() {
+        // Mirrors the structure of fiche-de-paie-decembre-2025.txt:
+        // - Monthly CSG déductible (311,61) must be skipped.
+        // - CRDS must not be classified as CSG non déductible.
+        // - "Brut imposable cumul annuel" must not be classified as NET_IMPOSABLE.
+        // - Taux personnalisé PAS line must not produce a PRELEVEMENT_SOURCE field.
+        // - French thousands ("3 347,22", "4 100,00") must parse correctly.
+        let text = "\
+COTISATIONS SALARIALES\n\
+CSG déductible                        4582,50     311,61\n\
+CRDS                                  4582,50      27,50\n\
+\n\
+CUMULS ANNUELS 2025\n\
+Brut imposable cumul annuel                    52 200,00\n\
+Net imposable                                  43 800,00\n\
+CSG déductible                                  3 347,22\n\
+CSG non déductible                              1 474,96\n\
+Prélèvement à la source                         4 100,00\n\
+\n\
+Taux personnalisé PAS appliqué : 9,20 %\n\
+";
+        let fields = TaxService::<MockTaxRepository>::parse_fiche_fields(text);
+
+        // Only fields from CUMULS section should appear.
+        // Brut imposable must NOT be NET_IMPOSABLE; CRDS must NOT appear at all.
+        let net: Vec<_> = fields
+            .iter()
+            .filter(|f| f.field_key == "NET_IMPOSABLE")
+            .collect();
+        assert_eq!(
+            net.len(),
+            1,
+            "exactly one NET_IMPOSABLE (net imposable, not brut)"
+        );
+        assert_eq!(
+            net[0].amount_eur,
+            Some("43800.00".parse::<Decimal>().unwrap()),
+            "net imposable 43 800,00 parsed correctly"
+        );
+
+        let csg_ded: Vec<_> = fields
+            .iter()
+            .filter(|f| f.field_key == "CSG_DEDUCTIBLE")
+            .collect();
+        assert_eq!(
+            csg_ded.len(),
+            1,
+            "exactly one CSG_DEDUCTIBLE (no monthly duplicate)"
+        );
+        assert_eq!(
+            csg_ded[0].amount_eur,
+            Some("3347.22".parse::<Decimal>().unwrap()),
+            "CSG déductible 3 347,22 parsed correctly"
+        );
+
+        let pas: Vec<_> = fields
+            .iter()
+            .filter(|f| f.field_key == "PRELEVEMENT_SOURCE")
+            .collect();
+        assert_eq!(
+            pas.len(),
+            1,
+            "exactly one PRELEVEMENT_SOURCE (taux line excluded)"
+        );
+        assert_eq!(
+            pas[0].amount_eur,
+            Some("4100.00".parse::<Decimal>().unwrap()),
+            "Prélèvement à la source 4 100,00 parsed correctly"
+        );
+
+        // CRDS must not appear.
+        let crds: Vec<_> = fields
+            .iter()
+            .filter(|f| {
+                f.field_key == "CSG_NON_DEDUCTIBLE"
+                    && f.value_text
+                        .as_deref()
+                        .map(|t| t.to_lowercase().contains("crds"))
+                        .unwrap_or(false)
+            })
+            .collect();
+        assert!(crds.is_empty(), "CRDS line must not produce a field");
     }
 
     #[test]

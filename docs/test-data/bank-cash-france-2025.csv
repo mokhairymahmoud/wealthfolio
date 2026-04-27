@@ -1,0 +1,53 @@
+date,activityType,symbol,quantity,unitPrice,currency,fee,amount,comment
+2025-01-02,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire janvier 2025
+2025-01-06,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel janvier
+2025-01-10,WITHDRAWAL,,1,1,EUR,0,18.50,Restau Le Midi - dejeuner pro
+2025-01-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-01-20,WITHDRAWAL,,1,1,EUR,0,22.00,Repas cantine bureau
+2025-01-28,WITHDRAWAL,,1,1,EUR,0,45.00,FNAC achat clavier bureautique
+2025-02-03,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire fevrier 2025
+2025-02-06,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel fevrier
+2025-02-12,WITHDRAWAL,,1,1,EUR,0,31.00,Restau La Brasserie - repas pro
+2025-02-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-02-19,WITHDRAWAL,,1,1,EUR,0,120.00,LDLC materiel informatique
+2025-03-03,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire mars 2025
+2025-03-06,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel mars
+2025-03-11,WITHDRAWAL,,1,1,EUR,0,24.50,Dejeuner client - restau Le Zinc
+2025-03-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-03-25,WITHDRAWAL,,1,1,EUR,0,500.00,Loyer appartement mars
+2025-04-02,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire avril 2025
+2025-04-07,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel avril
+2025-04-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-04-18,WITHDRAWAL,,1,1,EUR,0,19.80,Cantine entreprise - repas
+2025-05-02,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire mai 2025
+2025-05-06,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel mai
+2025-05-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-05-16,WITHDRAWAL,,1,1,EUR,0,28.00,Restau midi dejeuner pro
+2025-05-22,WITHDRAWAL,,1,1,EUR,0,89.00,FNAC ecran secondaire bureau
+2025-06-02,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire juin 2025
+2025-06-06,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel juin
+2025-06-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-06-20,WITHDRAWAL,,1,1,EUR,0,21.00,Repas dejeuner equipe
+2025-07-02,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire juillet 2025
+2025-07-07,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel juillet
+2025-07-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-08-01,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire aout 2025
+2025-08-06,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel aout
+2025-08-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-09-01,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire septembre 2025
+2025-09-05,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel septembre
+2025-09-12,WITHDRAWAL,,1,1,EUR,0,26.00,Restau La Cantine - repas pro
+2025-09-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-09-19,WITHDRAWAL,,1,1,EUR,0,199.00,Darty imprimante bureau
+2025-10-01,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire octobre 2025
+2025-10-06,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel octobre
+2025-10-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-10-22,WITHDRAWAL,,1,1,EUR,0,23.50,Dejeuner cantine entreprise
+2025-11-03,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire novembre 2025
+2025-11-06,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel novembre
+2025-11-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-11-21,WITHDRAWAL,,1,1,EUR,0,34.00,Restau dejeuner client
+2025-12-01,DEPOSIT,,1,1,EUR,0,3650.00,Virement salaire decembre 2025
+2025-12-05,WITHDRAWAL,,1,1,EUR,0,90.00,RATP Navigo mensuel decembre
+2025-12-14,WITHDRAWAL,,1,1,EUR,0,65.00,SFR forfait mobile professionnel
+2025-12-19,WITHDRAWAL,,1,1,EUR,0,27.00,Repas cantine noel equipe

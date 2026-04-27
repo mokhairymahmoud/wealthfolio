@@ -8,7 +8,10 @@ use tracing::{debug, warn};
 use wealthfolio_ai::{
     types::MessageAttachment, AiEnvironment, AiStreamEvent, ChatService, SendMessageRequest,
 };
-use wealthfolio_core::tax::{NewExtractedTaxField, TaxCloudExtractionTrait, TaxDocument};
+use wealthfolio_core::tax::{
+    ActivitySummary, FraisReelsClassification, NewExtractedTaxField, TaxCloudExtractionTrait,
+    TaxDocument,
+};
 use wealthfolio_core::{Error, Result};
 
 pub struct AiTaxCloudExtractor<E: AiEnvironment + 'static> {
@@ -232,5 +235,71 @@ impl<E: AiEnvironment + 'static> TaxCloudExtractionTrait for AiTaxCloudExtractor
                 confirmed_amount_eur: None,
             })
             .collect())
+    }
+
+    async fn classify_frais_reels(
+        &self,
+        activities: &[ActivitySummary],
+    ) -> Result<Vec<FraisReelsClassification>> {
+        if activities.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let transactions_json =
+            serde_json::to_string(activities).map_err(|e| Error::Unexpected(e.to_string()))?;
+
+        let prompt = format!(
+            "You are a French tax assistant. Classify the following bank transactions and identify \
+which ones are likely professional expense candidates eligible as \"frais réels\" on the French \
+income tax declaration (Form 2042, box 1AK).\n\
+\n\
+Eligible categories:\n\
+- TRANSPORT: commuting costs (metro, RER, bus, train, Navigo pass, Vélib professional use)\n\
+- REPAS: professional meals with clients or colleagues during work hours\n\
+- TELECOM: work phone subscription or internet when required for work\n\
+- MATERIEL: equipment purchased for professional use (computer, keyboard, screen, printer)\n\
+- FORMATION: professional training or books\n\
+\n\
+Rules:\n\
+- Only include transactions that have a plausible professional purpose based on the description.\n\
+- Exclude personal expenses (groceries, rent, leisure, personal subscriptions).\n\
+- Use confidence 0.9 for clearly professional, 0.7 for likely professional, 0.5 for ambiguous.\n\
+- Omit transactions that are clearly personal.\n\
+\n\
+Return ONLY valid JSON: {{\"candidates\":[{{\"id\":string,\"category\":string,\
+\"confidence\":number,\"rationale\":string}}]}}\n\
+\n\
+Transactions:\n{transactions_json}"
+        );
+
+        let response_text = collect_ai_response(
+            &self.chat_service,
+            SendMessageRequest {
+                content: prompt,
+                allowed_tools: Some(Vec::new()),
+                attachments: None,
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        #[derive(Deserialize)]
+        struct Envelope {
+            candidates: Vec<FraisReelsClassification>,
+        }
+
+        let payload = extract_json_payload(&response_text);
+        let envelope: Envelope = serde_json::from_str(payload).map_err(|error| {
+            warn!(
+                "Frais réels classification: failed to parse response. error={error} response={}",
+                &response_text[..response_text.len().min(800)]
+            );
+            Error::Unexpected(format!(
+                "Failed to parse frais réels classification response: {error}. Raw: {}",
+                &response_text[..response_text.len().min(200)]
+            ))
+        })?;
+
+        Ok(envelope.candidates)
     }
 }

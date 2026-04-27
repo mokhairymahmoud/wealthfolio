@@ -85,7 +85,9 @@ import { Textarea } from "@wealthfolio/ui/components/ui/textarea";
 import { useCallback, useMemo, useState } from "react";
 
 function currentTaxYear() {
-  return new Date().getFullYear();
+  // French tax declarations filed in year N cover income from year N-1.
+  // Default to the most recent complete income year.
+  return new Date().getFullYear() - 1;
 }
 
 function findReportForYear(reports: TaxYearReport[] | undefined, year: number) {

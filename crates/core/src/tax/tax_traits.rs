@@ -9,6 +9,26 @@ use crate::tax::{
     TaxReconciliationEntry, TaxReconciliationEntryUpdate, TaxReportDetail, TaxYearReport,
 };
 
+/// A single transaction sent to the LLM for frais réels classification.
+#[derive(Debug, serde::Serialize)]
+pub struct ActivitySummary {
+    pub id: String,
+    pub date: String,
+    pub amount: rust_decimal::Decimal,
+    pub currency: String,
+    pub notes: String,
+}
+
+/// One transaction that the LLM identified as a professional expense candidate.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FraisReelsClassification {
+    pub id: String,
+    pub category: String,
+    pub confidence: f64,
+    pub rationale: String,
+}
+
 #[async_trait]
 pub trait TaxCloudExtractionTrait: Send + Sync {
     async fn extract_tax_fields(
@@ -17,6 +37,13 @@ pub trait TaxCloudExtractionTrait: Send + Sync {
         content: &[u8],
         local_text_preview: &str,
     ) -> Result<Vec<crate::tax::NewExtractedTaxField>>;
+
+    /// Classify a batch of WITHDRAWAL transactions and return only those that
+    /// are likely professional expense candidates eligible as frais réels.
+    async fn classify_frais_reels(
+        &self,
+        activities: &[ActivitySummary],
+    ) -> Result<Vec<FraisReelsClassification>>;
 }
 
 #[async_trait]
